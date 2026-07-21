@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+env/
+
+# 虚拟环境
+.venv
+venv
+
+# 配置与密钥（含真实数据库密码 / API key）
+config.yaml
+.env
+
+# 测试数据数据（大文件）
+test_image/
+
+# 运行产物
+logs/
+*.log
+
+# 处理过程临时文件
+*.tmp
+tmp/
+temp/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Docker（避免递归）
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# 文档（镜像内不需要）
+docs/
+*.md
+!README.md
