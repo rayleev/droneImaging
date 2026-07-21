@@ -1,0 +1,60 @@
+# 无人机影像服务配置文件 — 示例模板
+# 复制为 config.yaml 后填写真实值：cp config.yaml.example config.yaml
+# config.yaml 已被 .gitignore 忽略，不会提交到仓库。
+
+server:
+  host: 0.0.0.0
+  port: 8002
+  workers: 2
+  debug: true
+
+# MinIO 对象存储
+minio:
+  endpoint: "localhost:9000"          # host:port，不带 http://
+  access_key: "your-minio-access-key"
+  secret_key: "your-minio-secret-key"
+  secure: false                       # 是否使用 HTTPS
+  buckets:
+    raw: "drone-raw"                  # 原始 GeoTIFF
+    cog: "drone-cog"                  # COG 格式
+    thumb: "drone-thumb"              # 缩略图
+
+# PostgreSQL 数据库
+postgresql:
+  url: "postgresql+asyncpg://user:password@localhost:5432/drone_imaging"
+
+# Milvus 向量数据库
+milvus:
+  host: "localhost"
+  port: 19530
+  collection: "image_vectors"
+  vector_dim: 1024                    # embedding 维度，需与 embedding 模型匹配
+
+# Embedding 模型
+embedding:
+  api_url: "http://localhost:18011/graph/v1/vector/embed"   # embedding 服务地址
+  api_key: "your-embedding-api-key"
+  model: "BAAI/bge-m3"
+  batch_size: 8
+
+# VLM 视觉语言模型
+vlm:
+  provider: "qwen-vl"                 # 可切换: qwen-vl / local
+  api_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "your-vlm-api-key"
+  model: "qwen-vl-max"
+  prompt_file: "prompts/vlm_describe.txt"
+  max_image_size: 1024                # 发送给 VLM 的最大图片边长（像素）
+  timeout: 60                         # API 超时（秒）
+  max_retries: 3                      # 最大重试次数
+
+# 天地图
+tianditu:
+  key: "your-tianditu-key"
+
+# 影像处理参数
+processing:
+  cog_blocksize: 512                  # COG 内部瓦片大小
+  cog_overview_levels: [2, 4, 8, 16]  # overview 金字塔层级
+  thumbnail_size: 512                 # 缩略图长边（像素）
+  max_concurrent_tasks: 3             # 后台处理最大并发数
