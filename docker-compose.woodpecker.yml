@@ -1,0 +1,36 @@
+# Woodpecker CI — docker-compose.yml
+# 启动: docker compose up -d
+services:
+  woodpecker-server:
+    image: woodpeckerci/woodpecker-server:latest
+    container_name: woodpecker-server
+    restart: unless-stopped
+    ports:
+      - "8006:8000"
+    environment:
+      - WOODPECKER_OPEN=true
+      - WOODPECKER_HOST=http://10.33.105.145:8006
+      - WOODPECKER_GITEA=true
+      - WOODPECKER_GITEA_URL=http://172.17.1.130:3000
+      - WOODPECKER_GITEA_CLIENT=${GITEA_CLIENT_ID}
+      - WOODPECKER_GITEA_SECRET=${GITEA_CLIENT_SECRET}
+      - WOODPECKER_AGENT_SECRET=${AGENT_SECRET}
+      - WOODPECKER_ADMIN=lirui
+    volumes:
+      - woodpecker-server-data:/var/lib/woodpecker
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:latest
+    container_name: woodpecker-agent
+    restart: unless-stopped
+    command: agent
+    depends_on:
+      - woodpecker-server
+    environment:
+      - WOODPECKER_SERVER=woodpecker-server:9000
+      - WOODPECKER_AGENT_SECRET=${AGENT_SECRET}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  woodpecker-server-data:
