@@ -5,10 +5,16 @@
 # 前提：
 #   1. Gitea 启用 Actions（app.ini 中 [actions] ENABLED = true）
 #   2. 仓库 Settings → Actions → 启用
-#   3. gitea-runner 已注册（已就绪）
-#   4. 仓库 Secrets 添加 SSH_HOST / SSH_USER / SSH_KEY（用于自动部署到服务器）
+#   3. drone-imaging-runner 已注册（已就绪）
+#   4. 仓库 Secrets 配置如下：
+#      - SSH_HOST / SSH_USER / SSH_KEY        （SSH 连接服务器）
+#      - DB_PASSWORD / DB_HOST / DB_USER / DB_NAME  （PostgreSQL）
+#      - MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY  （MinIO）
+#      - MILVUS_HOST                            （Milvus）
+#      - VLM_API_KEY                            （阿里云 DashScope）
+#      - EMBEDDING_API_URL / EMBEDDING_API_KEY  （内网 embedding 服务）
 #
-# 产出：构建镜像 → 推送到 Gitea 容器仓库 → SSH 到服务器拉取并重启
+# 产出：构建镜像 → 推送到 Gitea 容器仓库 → SSH 到服务器生成配置并重启
 
 name: Build and Deploy
 
@@ -16,14 +22,12 @@ on:
   workflow_dispatch: {}   # 手动触发
 
 env:
-  # Gitea 内置容器仓库地址（自动可用，无需手动配置）
   REGISTRY: ${{ gitea.server }}
   IMAGE_NAME: ${{ gitea.repository }}
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    # Gitea Actions 需要容器模式运行器（act_runner 配置 docker 模式）
 
     steps:
       - name: Checkout code
@@ -37,7 +41,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ gitea.actor }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}   # 用 Gitea 个人访问令牌（pat）
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Extract metadata (tags, labels)
         id: meta
@@ -45,11 +49,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # tag 推送 → 用版本号，如 v1.2.0
             type=semver,pattern={{version}}
-            # main 分支 → latest
             type=raw,value=latest,enable={{is_default_branch}}
-            # 短 commit sha，便于追溯
             type=sha,prefix=,suffix=,format=short
 
       - name: Build and push Docker image
@@ -62,15 +63,86 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── 构建完成后通过 SSH 在服务器上拉取并重启 ──
-      # 需在仓库 Secrets 中配置 SSH_HOST / SSH_USER / SSH_KEY
+      # ── 通过 SSH 部署：用 Secrets 动态生成 config.yaml，然后拉取镜像重启 ──
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          # 把这些 Secrets 作为环境变量传入远程脚本
+          envs: |
+            DB_PASSWORD
+            DB_HOST
+            DB_USER
+            DB_NAME
+            MINIO_ENDPOINT
+            MINIO_ACCESS_KEY
+            MINIO_SECRET_KEY
+            MILVUS_HOST
+            VLM_API_KEY
+            EMBEDDING_API_URL
+            EMBEDDING_API_KEY
           script: |
+            # 禁用 bash 历史扩展，防止密码中的 ! 被解释
+            set +H
+
+            # ── 1. 用 Secrets 动态生成 config.yaml ──
+            mkdir -p ~/droneImaging
+            cat > ~/droneImaging/config.yaml << EOF
+            server:
+              host: 0.0.0.0
+              port: 8002
+              workers: 2
+              debug: false
+              max_upload_mb: 1500
+
+            minio:
+              endpoint: "${MINIO_ENDPOINT}"
+              access_key: "${MINIO_ACCESS_KEY}"
+              secret_key: "${MINIO_SECRET_KEY}"
+              secure: false
+              buckets:
+                raw: "drone-raw"
+                cog: "drone-cog"
+                thumb: "drone-thumb"
+
+            postgresql:
+              url: "postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}"
+
+            milvus:
+              host: "${MILVUS_HOST}"
+              port: 19530
+              collection: "image_vectors"
+              vector_dim: 1024
+
+            embedding:
+              api_url: "${EMBEDDING_API_URL}"
+              api_key: "${EMBEDDING_API_KEY}"
+              model: "BAAI/bge-m3"
+              batch_size: 8
+
+            vlm:
+              provider: "qwen-vl"
+              api_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+              api_key: "${VLM_API_KEY}"
+              model: "qwen-vl-max"
+              prompt_file: "prompts/vlm_describe.txt"
+              max_image_size: 1024
+              timeout: 60
+              max_retries: 3
+
+            processing:
+              cog_blocksize: 512
+              cog_overview_levels: [2, 4, 8, 16]
+              thumbnail_size: 512
+              max_concurrent_tasks: 2
+            EOF
+
+            echo "config.yaml generated:"
+            cat ~/droneImaging/config.yaml
+
+            # ── 2. 拉取最新镜像并重启容器 ──
             cd ~/droneImaging
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             docker rm -f drone-imaging 2>/dev/null
@@ -81,3 +153,8 @@ jobs:
               -e DRONE_PUBLIC_BASE_URL=http://${{ secrets.SSH_HOST }}:8005 \
               -v ~/droneImaging/config.yaml:/app/config.yaml:ro \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # ── 3. 验证启动 ──
+            sleep 5
+            docker ps --filter name=drone-imaging --format "status: {{.Status}}"
+            curl -sf http://localhost:8005/health && echo " -> health OK" || echo " -> health FAILED"
