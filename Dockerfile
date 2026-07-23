@@ -6,15 +6,15 @@
 # 注意: config.yaml 含密钥且被 git 忽略，运行时应通过 -v 挂载真实配置文件，
 #       或通过环境变量传入（见 config.py 的 DRONE_PUBLIC_BASE_URL）。
 
-# ── 基础镜像：默认阿里镜像，可取消注释切换 Docker Hub ──
-FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim
-# FROM python:3.12-slim
+# ── 基础镜像：官方源（阿里镜像需注册账号，直接用官方）──
+# 国内加速可配置 Docker daemon registry-mirrors
+FROM python:3.12-slim
 
 # 避免 Python 写 .pyc 文件 + 输出不缓冲
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# ── 软件源：默认阿里源，可取消注释切换官方源 ──
+# ── 软件源：阿里 apt 源（加速系统包安装）──
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
     && sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
 
@@ -36,10 +36,9 @@ WORKDIR /app
 # 先复制依赖文件，利用 Docker 层缓存
 COPY requirements.txt .
 
-# ── pip 源：默认阿里源，可取消注释切换 PyPI 官方 ──
+# ── pip 源：阿里源（加速 Python 包安装）──
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
     && pip install --no-cache-dir -r requirements.txt
-# RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY src/ ./src/
