@@ -13,13 +13,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # 系统依赖：rasterio/GDAL、Pillow 所需的运行时库
-# (rasterio wheel 已内置 GDAL，此处补充 zlib/libjpeg 等 Pillow 依赖)
+# (rasterio wheel 已内置 GDAL，此处补充 zlib/libjpeg/expat 等 Pillow/rasterio 依赖)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libpng-dev \
         libjpeg-dev \
         libtiff-dev \
         libgeos-dev \
+        libexpat1 \
         curl \
         gettext-base \
     && rm -rf /var/lib/apt/lists/*
