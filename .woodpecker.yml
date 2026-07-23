@@ -25,5 +25,6 @@ steps:
         drone-imaging:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    secrets:
-      - CONFIG_YAML
+    environment:
+      CONFIG_YAML:
+        from_secret: CONFIG_YAML
