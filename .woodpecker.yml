@@ -3,17 +3,16 @@
 
 steps:
   build:
-    image: docker:latest
+    image: docker:24
     commands:
       - docker build -t drone-imaging:latest .
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    when:
-      event: manual
 
   deploy:
-    image: docker:latest
+    image: docker:24
     commands:
+      - echo "$CONFIG_YAML" > /tmp/config.yaml
       - docker stop drone-imaging 2>/dev/null || true
       - docker rm -f drone-imaging 2>/dev/null || true
       - >
@@ -22,9 +21,9 @@ steps:
         --restart unless-stopped
         -p 8005:8002
         -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005
-        -v /home/root01/droneImaging/config.yaml:/app/config.yaml:ro
+        -v /tmp/config.yaml:/app/config.yaml:ro
         drone-imaging:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    when:
-      event: manual
+    secrets:
+      - CONFIG_YAML
