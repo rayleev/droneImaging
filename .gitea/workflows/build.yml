@@ -1,19 +1,19 @@
-# Gitea Actions — 构建 Docker 镜像并推送到 Gitea 内置容器仓库
+# Gitea Actions — 手动构建 Docker 镜像并部署
+#
+# 触发方式：手动触发（Gitea 仓库页面 → Actions → 选择本工作流 → Run workflow）
 #
 # 前提：
 #   1. Gitea 启用 Actions（app.ini 中 [actions] ENABLED = true）
 #   2. 仓库 Settings → Actions → 启用
-#   3. 需要时通过仓库 Settings → Secrets 注入部署相关变量
+#   3. gitea-runner 已注册（已就绪）
+#   4. 仓库 Secrets 添加 SSH_HOST / SSH_USER / SSH_KEY（用于自动部署到服务器）
 #
-# 触发：main 分支 push 或 tag v*
-# 产出：镜像推送到 <gitea-host>/<owner>/drone-imaging:<ref>
+# 产出：构建镜像 → 推送到 Gitea 容器仓库 → SSH 到服务器拉取并重启
 
-name: Build and Push Docker Image
+name: Build and Deploy
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
+  workflow_dispatch: {}   # 手动触发
 
 env:
   # Gitea 内置容器仓库地址（自动可用，无需手动配置）
@@ -62,17 +62,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── 可选：构建完成后通过 SSH 在服务器上拉取并重启 ──
-      # 取消注释以下步骤，并在仓库 Secrets 中配置 SSH_HOST / SSH_USER / SSH_KEY
-      #
-      # - name: Deploy to server via SSH
-      #   if: gitea.ref == 'refs/heads/main'
-      #   uses: appleboy/ssh-action@v1
-      #   with:
-      #     host: ${{ secrets.SSH_HOST }}
-      #     username: ${{ secrets.SSH_USER }}
-      #     key: ${{ secrets.SSH_KEY }}
-      #     script: |
-      #       cd /opt/drone-imaging
-      #       docker compose -f docker-compose.prod.yml pull
-      #       docker compose -f docker-compose.prod.yml up -d
+      # ── 构建完成后通过 SSH 在服务器上拉取并重启 ──
+      # 需在仓库 Secrets 中配置 SSH_HOST / SSH_USER / SSH_KEY
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/droneImaging
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker rm -f drone-imaging 2>/dev/null
+            docker run -d \
+              --name drone-imaging \
+              --restart unless-stopped \
+              -p 8005:8002 \
+              -e DRONE_PUBLIC_BASE_URL=http://${{ secrets.SSH_HOST }}:8005 \
+              -v ~/droneImaging/config.yaml:/app/config.yaml:ro \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
