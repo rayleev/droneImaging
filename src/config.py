@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── 各配置节模型 ──────────────────────────────────────────────
@@ -21,6 +21,7 @@ class ServerConfig(BaseModel):
     port: int = 8002
     workers: int = 2
     debug: bool = False
+    max_upload_mb: int = Field(500, description="上传文件大小上限（MB）")
 
 
 class MinioBucketsConfig(BaseModel):
@@ -46,6 +47,10 @@ class MilvusConfig(BaseModel):
     port: int = 19530
     collection: str = "image_vectors"
     vector_dim: int = 1024
+    auto_reset_collection: bool = Field(
+        False,
+        description="启动时是否删除并重建 Milvus collection（用于 schema 迁移，迁移后改回 False）",
+    )
 
 
 class EmbeddingConfig(BaseModel):
@@ -102,6 +107,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def load_config(config_path: str | Path | None = None) -> AppConfig:
     """加载 config.yaml 并返回 AppConfig 单例。
 
+    加载顺序（后者覆盖前者）：
+    1. config.yaml 提供基础配置
+    2. 环境变量（见 _apply_env_overrides）覆盖连接信息 / 密钥
+
     Args:
         config_path: 配置文件路径，默认为项目根目录下的 config.yaml
     """
@@ -120,7 +129,71 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         raw = yaml.safe_load(f) or {}
 
     _config = AppConfig(**raw)
+    _apply_env_overrides(_config)
     return _config
+
+
+def _apply_env_overrides(cfg: AppConfig) -> None:
+    """用环境变量覆盖配置（仅覆盖已设置的变量，未设置则保留 yaml 值）。
+
+    用于 Docker / 生产部署：密码和连接信息通过环境变量注入，
+    避免明文写入 config.yaml。
+    注意：DRONE_PUBLIC_BASE_URL 已在 get_public_base_url() 中直接读取，此处不处理。
+    """
+    # 数据库
+    db_url = os.environ.get("DB_URL")
+    if db_url:
+        cfg.postgresql = cfg.postgresql.model_validate({"url": db_url})
+
+    # MinIO
+    minio_override = _env_dict({
+        "endpoint": os.environ.get("MINIO_ENDPOINT"),
+        "access_key": os.environ.get("MINIO_ACCESS_KEY"),
+        "secret_key": os.environ.get("MINIO_SECRET_KEY"),
+    })
+    if minio_override:
+        cfg.minio = cfg.minio.model_validate({**cfg.minio.model_dump(), **minio_override})
+
+    # Milvus
+    milvus_override = _env_dict({
+        "host": os.environ.get("MILVUS_HOST"),
+        "port": _to_int(os.environ.get("MILVUS_PORT")),
+    })
+    if milvus_override:
+        cfg.milvus = cfg.milvus.model_validate({**cfg.milvus.model_dump(), **milvus_override})
+
+    # VLM
+    vlm_override = _env_dict({
+        "api_key": os.environ.get("VLM_API_KEY"),
+        "api_url": os.environ.get("VLM_API_URL"),
+        "model": os.environ.get("VLM_MODEL"),
+    })
+    if vlm_override:
+        cfg.vlm = cfg.vlm.model_validate({**cfg.vlm.model_dump(), **vlm_override})
+
+    # Embedding
+    embedding_override = _env_dict({
+        "api_url": os.environ.get("EMBEDDING_API_URL"),
+        "api_key": os.environ.get("EMBEDDING_API_KEY"),
+        "model": os.environ.get("EMBEDDING_MODEL"),
+    })
+    if embedding_override:
+        cfg.embedding = cfg.embedding.model_validate({**cfg.embedding.model_dump(), **embedding_override})
+
+
+def _env_dict(mapping: dict) -> dict:
+    """过滤掉值为 None 的项。"""
+    return {k: v for k, v in mapping.items() if v is not None}
+
+
+def _to_int(value: str | None) -> int | None:
+    """安全转 int，失败返回 None。"""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_config() -> AppConfig:

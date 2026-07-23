@@ -28,6 +28,8 @@ class ImageSearchFilters(BaseModel):
     task_id: Optional[str] = None
     field_name: Optional[str] = None
     survey_stage: Optional[str] = None
+    crop_type: Optional[str] = Field(None, description="作物类型 ISO 代码，如 ZM=玉米")
+    growth_stage: Optional[str] = Field(None, description="生长阶段 BBCH 代码或中文")
 
 
 class ImageSearchRequest(BaseModel):
@@ -105,6 +107,8 @@ class ImageSearchResultItem(BaseModel):
     task_id: str
     field_name: Optional[str] = None
     survey_stage: Optional[str] = None
+    crop_type: Optional[str] = None
+    growth_stage: Optional[str] = None
     survey_time: Optional[datetime] = None
     bbox: Optional[list] = None
     center: Optional[list] = None

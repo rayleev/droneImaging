@@ -123,20 +123,26 @@ async def _do_process(
         await _update_status(session, image, "describing", "VLM 描述生成中")
         from src.services.vlm import describe_image
 
-        description = await describe_image(thumb_path)
-        image.vlm_description = description
+        result = await describe_image(thumb_path)
+        # summary 用于 embedding 和展示；完整结构化 JSON 存入 extra_metadata
+        image.vlm_description = result.summary
+        # 合并而非覆盖 extra_metadata，避免抹掉之前写入的数据
+        existing_extra = image.extra_metadata or {}
+        existing_extra.update(result.raw)
+        image.extra_metadata = existing_extra
         image.vlm_model = cfg.vlm.model
         image.vlm_time = datetime.now()
         await session.commit()
-        logger.info(f"[{image_id}] Step 5 完成: VLM 描述已生成")
+        logger.info(f"[{image_id}] Step 5 完成: VLM 描述已生成 (parsed_ok={result.parsed_ok})")
 
         # ── Step 6: Embedding + Milvus ──
         await _update_status(session, image, "embedding", "向量生成中")
         from src.services.embedding import build_embedding_text, embed_text
         from src.services.milvus_client import insert_vector
 
+        # 用 summary（而非 JSON 原文）做 embedding，避免字段名污染向量语义
         embed_text_input = build_embedding_text(
-            vlm_description=description,
+            vlm_description=result.summary,
             task_id=image.task_id or "",
             field_name=image.field_name or "",
             survey_stage=image.survey_stage or "",
@@ -150,6 +156,8 @@ async def _do_process(
             task_id=image.task_id or "",
             field_name=image.field_name or "",
             survey_stage=image.survey_stage or "",
+            crop_type=result.crop_type or "",
+            growth_stage=result.growth_stage or "",
         )
         image.embedding_id = str(image.id)
         await session.commit()

@@ -152,7 +152,7 @@ class Image(Base):
     # ── VLM 描述 ──
     vlm_description: Mapped[str | None] = mapped_column(
         Text, nullable=True,
-        comment="VLM 生成的自由描述",
+        comment="VLM 生成的自然语言摘要（用于 embedding 和展示）",
     )
     vlm_model: Mapped[str | None] = mapped_column(
         String(100), nullable=True,
@@ -186,7 +186,7 @@ class Image(Base):
     # ── 扩展 ──
     extra_metadata: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
-        comment="扩展元数据（预留）",
+        comment="扩展元数据（含 VLM 结构化输出：crop_type、growth_stage、canopy_coverage 等）",
     )
 
     # ── 时间戳 ──

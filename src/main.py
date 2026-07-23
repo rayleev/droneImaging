@@ -33,8 +33,13 @@ async def lifespan(app: FastAPI):
 
     # 初始化 Milvus（检查/创建 collection）
     try:
-        from src.services.milvus_client import ensure_collection
-        ensure_collection()
+        from src.services.milvus_client import ensure_collection, reset_collection
+
+        if get_config().milvus.auto_reset_collection:
+            reset_collection()
+            logger.warning("Milvus collection 已重建（auto_reset_collection=True）")
+        else:
+            ensure_collection()
         logger.info("Milvus collection 初始化完成")
     except Exception as e:
         logger.warning(f"Milvus 初始化失败（服务仍可启动，检索功能不可用）: {e}")

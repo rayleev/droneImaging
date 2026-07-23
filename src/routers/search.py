@@ -55,6 +55,10 @@ async def search_images(
             filters["field_name"] = req.filters.field_name
         if req.filters.survey_stage:
             filters["survey_stage"] = req.filters.survey_stage
+        if req.filters.crop_type:
+            filters["crop_type"] = req.filters.crop_type
+        if req.filters.growth_stage:
+            filters["growth_stage"] = req.filters.growth_stage
 
     try:
         search_results = await search_vectors(query_vector, top_k=req.limit, filters=filters)
@@ -81,11 +85,18 @@ async def search_images(
         if img is None:
             continue  # Milvus 有但 PG 没有（数据不一致），跳过
 
+        # 从 extra_metadata 提取 VLM 结构化字段（crop_type、growth_stage）
+        extra = img.extra_metadata or {}
+        crop_type = extra.get("crop_type")
+        growth_stage = extra.get("growth_stage")
+
         items.append(ImageSearchResultItem(
             id=img.id,
             task_id=img.task_id,
             field_name=img.field_name,
             survey_stage=img.survey_stage,
+            crop_type=crop_type,
+            growth_stage=growth_stage,
             survey_time=img.survey_time,
             bbox=img.bbox,
             center=[img.center_lon, img.center_lat] if img.center_lon else None,

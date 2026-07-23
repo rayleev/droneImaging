@@ -50,6 +50,15 @@ async def upload_image(
     if not file.filename or not file.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="仅支持 GeoTIFF 文件（.tif/.tiff）")
 
+    # 校验文件大小（防 OOM）：先读入内存但设上限
+    max_upload_bytes = get_config().server.max_upload_mb * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大（{len(content) / 1024 / 1024:.1f} MB），上限 {get_config().server.max_upload_mb} MB",
+        )
+
     # 解析调查时间
     parsed_survey_time = None
     if survey_time:
@@ -83,9 +92,13 @@ async def upload_image(
     from pathlib import Path
     from src.services.pipeline import process_image
 
+    # 安全：仅取文件名 basename，防止路径遍历（如 ../../etc/passwd）
+    safe_name = Path(file.filename).name if file.filename else "upload.tif"
+    if not safe_name:
+        safe_name = "upload.tif"
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="drone_"))
-    tmp_path = tmp_dir / file.filename
-    content = await file.read()
+    tmp_path = tmp_dir / safe_name
     tmp_path.write_bytes(content)
 
     # 异步后台处理（不阻塞响应）

@@ -42,12 +42,15 @@ temp/
 *.swo
 .DS_Store
 
-# Docker（避免递归）
-Dockerfile*
-docker-compose*.yml
-.dockerignore
-
 # 文档（镜像内不需要）
 docs/
 *.md
 !README.md
+
+# 测试（镜像内不需要）
+tests/
+.pytest_cache/
+
+# CI/CD（镜像内不需要）
+.github/
+.gitlab-ci.yml

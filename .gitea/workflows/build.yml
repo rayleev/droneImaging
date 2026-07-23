@@ -1,0 +1,78 @@
+# Gitea Actions — 构建 Docker 镜像并推送到 Gitea 内置容器仓库
+#
+# 前提：
+#   1. Gitea 启用 Actions（app.ini 中 [actions] ENABLED = true）
+#   2. 仓库 Settings → Actions → 启用
+#   3. 需要时通过仓库 Settings → Secrets 注入部署相关变量
+#
+# 触发：main 分支 push 或 tag v*
+# 产出：镜像推送到 <gitea-host>/<owner>/drone-imaging:<ref>
+
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+env:
+  # Gitea 内置容器仓库地址（自动可用，无需手动配置）
+  REGISTRY: ${{ gitea.server }}
+  IMAGE_NAME: ${{ gitea.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # Gitea Actions 需要容器模式运行器（act_runner 配置 docker 模式）
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Gitea Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ gitea.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}   # 用 Gitea 个人访问令牌（pat）
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # tag 推送 → 用版本号，如 v1.2.0
+            type=semver,pattern={{version}}
+            # main 分支 → latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 短 commit sha，便于追溯
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── 可选：构建完成后通过 SSH 在服务器上拉取并重启 ──
+      # 取消注释以下步骤，并在仓库 Secrets 中配置 SSH_HOST / SSH_USER / SSH_KEY
+      #
+      # - name: Deploy to server via SSH
+      #   if: gitea.ref == 'refs/heads/main'
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.SSH_HOST }}
+      #     username: ${{ secrets.SSH_USER }}
+      #     key: ${{ secrets.SSH_KEY }}
+      #     script: |
+      #       cd /opt/drone-imaging
+      #       docker compose -f docker-compose.prod.yml pull
+      #       docker compose -f docker-compose.prod.yml up -d

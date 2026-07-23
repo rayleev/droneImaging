@@ -11,14 +11,12 @@ from __future__ import annotations
 import io
 import math
 import uuid
-from functools import lru_cache
 
 import numpy as np
 import rasterio
 from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
 from rasterio.enums import Resampling
-from rasterio.warp import transform_bounds
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_config

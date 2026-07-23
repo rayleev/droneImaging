@@ -55,7 +55,7 @@ def convert_to_cog(
                 driver="COG",
                 blocksize=cfg.cog_blocksize,
                 overviews="AUTO",
-                overview_count=len(cfg.cog_overview_levels),
+                overview_levels=cfg.cog_overview_levels,
                 compress="DEFLATE",
                 predictor="YES",
             )

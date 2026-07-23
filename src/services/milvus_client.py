@@ -60,6 +60,8 @@ def ensure_collection() -> None:
         FieldSchema(name="task_id", dtype=DataType.VARCHAR, max_length=100),
         FieldSchema(name="field_name", dtype=DataType.VARCHAR, max_length=200),
         FieldSchema(name="survey_stage", dtype=DataType.VARCHAR, max_length=100),
+        FieldSchema(name="crop_type", dtype=DataType.VARCHAR, max_length=100),
+        FieldSchema(name="growth_stage", dtype=DataType.VARCHAR, max_length=100),
     ]
     schema = CollectionSchema(fields=fields, description="无人机影像语义向量")
 
@@ -78,8 +80,29 @@ def ensure_collection() -> None:
     collection.create_index(field_name="task_id", index_name="idx_task_id")
     collection.create_index(field_name="field_name", index_name="idx_field_name")
     collection.create_index(field_name="survey_stage", index_name="idx_survey_stage")
+    collection.create_index(field_name="crop_type", index_name="idx_crop_type")
+    collection.create_index(field_name="growth_stage", index_name="idx_growth_stage")
 
     logger.info(f"Milvus collection 已创建: {collection_name} (dim={dim})")
+
+
+def reset_collection() -> None:
+    """删除旧 collection 并用新 schema 重建。
+
+    用于迁移：schema 变更（如新增标量字段）后一次性调用。
+    注意：会丢失所有已有向量数据，需确保数据可重新入库。
+    """
+    _ensure_connection()
+    cfg = get_config().milvus
+    collection_name = cfg.collection
+
+    if utility.has_collection(collection_name, using=_ALIAS):
+        utility.drop_collection(collection_name, using=_ALIAS)
+        logger.info(f"Milvus collection 已删除: {collection_name}")
+
+    # 复用 ensure_collection 创建新 schema
+    ensure_collection()
+    logger.info(f"Milvus collection 已重建: {collection_name}")
 
 
 async def insert_vector(
@@ -88,6 +111,8 @@ async def insert_vector(
     task_id: str = "",
     field_name: str = "",
     survey_stage: str = "",
+    crop_type: str = "",
+    growth_stage: str = "",
     image_vector: Optional[List[float]] = None,
 ) -> None:
     """插入一条向量记录。
@@ -98,6 +123,8 @@ async def insert_vector(
         task_id: 任务编号（标量过滤用）
         field_name: 试验田名称
         survey_stage: 调查阶段
+        crop_type: 作物类型（标量过滤用，来自 VLM 结构化输出）
+        growth_stage: 生长阶段（标量过滤用，来自 VLM 结构化输出）
         image_vector: 图片 embedding（预留，默认零向量）
     """
     _ensure_connection()
@@ -117,11 +144,35 @@ async def insert_vector(
         [task_id],            # task_id
         [field_name],         # field_name
         [survey_stage],       # survey_stage
+        [crop_type],          # crop_type
+        [growth_stage],       # growth_stage
     ]
 
     collection.insert(data)
     collection.flush()
     logger.debug(f"Milvus 向量已插入: id={image_id}")
+
+
+# 允许作为 Milvus 标量过滤的字段白名单（防注入）
+_FILTERABLE_FIELDS = frozenset({"task_id", "field_name", "survey_stage", "crop_type", "growth_stage"})
+
+
+def _build_filter_expr(filters: Dict[str, str]) -> Optional[str]:
+    """构建 Milvus 过滤表达式（安全版本）。
+
+    - 仅接受白名单内的字段名（防 key 注入）
+    - 对值中的双引号做转义（防 value 注入逃逸字符串字面量）
+    """
+    if not filters:
+        return None
+    conditions = []
+    for key, value in filters.items():
+        if not value or key not in _FILTERABLE_FIELDS:
+            continue
+        # 转义双引号，防止值逃逸出字符串字面量
+        safe_value = value.replace('"', "")
+        conditions.append(f'{key} == "{safe_value}"')
+    return " and ".join(conditions) if conditions else None
 
 
 async def search_vectors(
@@ -145,15 +196,8 @@ async def search_vectors(
     collection = Collection(cfg.collection, using=_ALIAS)
     collection.load()
 
-    # 构建过滤表达式
-    expr = None
-    if filters:
-        conditions = []
-        for key, value in filters.items():
-            if value:
-                conditions.append(f'{key} == "{value}"')
-        if conditions:
-            expr = " and ".join(conditions)
+    # 构建过滤表达式（安全版本：字段白名单 + 值转义）
+    expr = _build_filter_expr(filters)
 
     search_params = {"metric_type": "COSINE", "params": {"ef": 128}}
 
