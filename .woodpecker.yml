@@ -75,6 +75,7 @@ steps:
         exit 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /home/root01/deploy:/home/root01/deploy
     environment:
       CONFIG_YAML:
         from_secret: CONFIG_YAML
