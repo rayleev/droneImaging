@@ -19,8 +19,12 @@ steps:
         set -e
 
         # ── 1. 写入配置 ──
-        echo "$CONFIG_YAML" > /tmp/config.yaml
-        echo "配置已写入 /tmp/config.yaml"
+        # 配置统一存放在 /home/root01/deploy/drone-imaging/config.yaml
+        # rm -rf 清除任何残留（文件或旧目录），确保 echo 写入成功。
+        DEPLOY_CFG=/home/root01/deploy/drone-imaging/config.yaml
+        rm -rf "$DEPLOY_CFG"
+        echo "$CONFIG_YAML" > "$DEPLOY_CFG"
+        echo "配置已写入 $DEPLOY_CFG"
 
         # ── 2. 记录旧镜像（用于回滚）──
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' drone-imaging 2>/dev/null) || OLD_IMAGE=""
@@ -37,7 +41,7 @@ steps:
           --restart unless-stopped \
           -p 8005:8002 \
           -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
-          -v /tmp/config.yaml:/app/config.yaml:ro \
+          -v "$DEPLOY_CFG:/app/config.yaml:ro" \
           drone-imaging:latest
         echo "新容器已启动"
 
@@ -62,7 +66,7 @@ steps:
             --restart unless-stopped \
             -p 8005:8002 \
             -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
-            -v /tmp/config.yaml:/app/config.yaml:ro \
+            -v "$DEPLOY_CFG:/app/config.yaml:ro" \
             $OLD_IMAGE
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
