@@ -1,5 +1,8 @@
 # Woodpecker CI — droneImaging 流水线
 # 在网页上手动触发执行
+#
+# 流程: build → deploy（停旧 → 起新 → 健康检查 → 失败回滚）
+# 改进: 新容器启动后轮询 /health，超时则自动回滚到旧镜像
 
 steps:
   build:
@@ -12,20 +15,60 @@ steps:
   deploy:
     image: docker:24
     commands:
-      - echo "DEBUG: starting deploy"
-      - echo "$CONFIG_YAML" > /tmp/config.yaml
-      - ls -la /tmp/config.yaml
-      - cat /tmp/config.yaml
-      - docker stop drone-imaging 2>/dev/null || true
-      - docker rm -f drone-imaging 2>/dev/null || true
-      - >
-        docker run -d
-        --name drone-imaging
-        --restart unless-stopped
-        -p 8005:8002
-        -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005
-        -v /tmp/config.yaml:/app/config.yaml:ro
-        drone-imaging:latest
+      - |
+        set -e
+
+        # ── 1. 写入配置 ──
+        echo "$CONFIG_YAML" > /tmp/config.yaml
+        echo "配置已写入 /tmp/config.yaml"
+
+        # ── 2. 记录旧镜像（用于回滚）──
+        OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' drone-imaging 2>/dev/null) || OLD_IMAGE=""
+        echo "旧镜像: ${OLD_IMAGE:-无}"
+
+        # ── 3. 停旧容器 ──
+        docker stop drone-imaging 2>/dev/null || true
+        docker rm -f drone-imaging 2>/dev/null || true
+        echo "旧容器已清理"
+
+        # ── 4. 启动新容器 ──
+        docker run -d \
+          --name drone-imaging \
+          --restart unless-stopped \
+          -p 8005:8002 \
+          -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
+          -v /tmp/config.yaml:/app/config.yaml:ro \
+          drone-imaging:latest
+        echo "新容器已启动"
+
+        # ── 5. 健康检查（最多 60s）──
+        echo "等待服务就绪..."
+        for i in $(seq 1 20); do
+          if curl -fsS http://localhost:8005/health > /dev/null 2>&1; then
+            echo "✓ 部署成功，服务就绪"
+            exit 0
+          fi
+          echo "等待中... ($i/20)"
+          sleep 3
+        done
+
+        # ── 6. 健康检查失败 → 回滚 ──
+        echo "✗ 新容器未就绪，执行回滚..."
+        docker stop drone-imaging 2>/dev/null || true
+        docker rm -f drone-imaging 2>/dev/null || true
+        if [ -n "$OLD_IMAGE" ]; then
+          docker run -d \
+            --name drone-imaging \
+            --restart unless-stopped \
+            -p 8005:8002 \
+            -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
+            -v /tmp/config.yaml:/app/config.yaml:ro \
+            $OLD_IMAGE
+          echo "已回滚到旧镜像: $OLD_IMAGE"
+        else
+          echo "无旧镜像可回滚"
+        fi
+        exit 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
