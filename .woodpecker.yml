@@ -12,7 +12,10 @@ steps:
   deploy:
     image: docker:24
     commands:
+      - echo "DEBUG: CONFIG_YAML length = ${#CONFIG_YAML}"
       - echo "$CONFIG_YAML" > /tmp/config.yaml
+      - ls -la /tmp/config.yaml
+      - cat /tmp/config.yaml
       - docker stop drone-imaging 2>/dev/null || true
       - docker rm -f drone-imaging 2>/dev/null || true
       - >
