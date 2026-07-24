@@ -12,7 +12,7 @@ steps:
   deploy:
     image: docker:24
     commands:
-      - echo "DEBUG: CONFIG_YAML length = ${#CONFIG_YAML}"
+      - echo "DEBUG: starting deploy"
       - echo "$CONFIG_YAML" > /tmp/config.yaml
       - ls -la /tmp/config.yaml
       - cat /tmp/config.yaml
