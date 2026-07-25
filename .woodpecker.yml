@@ -8,14 +8,14 @@
 # 避免 deploy 容器在 bridge 网络时 curl localhost 指向自己的问题。
 
 steps:
-  build:
+  - name: build
     image: docker:24
     commands:
       - docker build -t drone-imaging:latest .
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-  deploy:
+  - name: deploy
     image: docker:24
     commands:
       - |
