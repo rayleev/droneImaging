@@ -3,6 +3,9 @@
 #
 # 流程: build → deploy（停旧 → 起新 → 健康检查 → 失败回滚）
 # 改进: 新容器启动后轮询 /health，超时则自动回滚到旧镜像
+#
+# 健康检查用独立 curl 容器接入 phenomics-net，通过容器名访问。
+# 避免 deploy 容器在 bridge 网络时 curl localhost 指向自己的问题。
 
 steps:
   build:
@@ -14,7 +17,6 @@ steps:
 
   deploy:
     image: docker:24
-    network_mode: host
     commands:
       - |
         set -e
@@ -36,9 +38,10 @@ steps:
         docker rm -f drone-imaging 2>/dev/null || true
         echo "旧容器已清理"
 
-        # ── 4. 启动新容器 ──
+        # ── 4. 启动新容器（加入 phenomics-net，使 curl 容器可通过容器名访问）──
         docker run -d \
           --name drone-imaging \
+          --network phenomics-net \
           --restart unless-stopped \
           -p 8005:8002 \
           -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
@@ -47,9 +50,10 @@ steps:
         echo "新容器已启动"
 
         # ── 5. 健康检查（最多 60s）──
+        # 用独立 curl 容器接入 phenomics-net，通过容器名访问服务。
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
-          if curl -fsS http://localhost:8005/health > /dev/null 2>&1; then
+          if docker run --rm --network phenomics-net curlimages/curl -fsS --max-time 2 http://drone-imaging:8002/health > /dev/null 2>&1; then
             echo "✓ 部署成功，服务就绪"
             exit 0
           fi
@@ -64,6 +68,7 @@ steps:
         if [ -n "$OLD_IMAGE" ]; then
           docker run -d \
             --name drone-imaging \
+            --network phenomics-net \
             --restart unless-stopped \
             -p 8005:8002 \
             -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
