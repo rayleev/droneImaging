@@ -15,6 +15,41 @@ from loguru import logger
 from src.config import get_config
 
 
+def build_embedding_text(
+    vlm_description: str,
+    task_id: str = "",
+    field_name: str = "",
+    survey_stage: str = "",
+    device_model: str = "",
+    data_type: str = "",
+) -> str:
+    """拼接用于 embedding 的文本。
+
+    将 VLM 描述与关键业务元数据组合，
+    使向量同时包含视觉语义和结构化信息。
+    """
+    parts = []
+    if vlm_description:
+        parts.append(vlm_description)
+
+    meta_parts = []
+    if task_id:
+        meta_parts.append(f"任务:{task_id}")
+    if field_name:
+        meta_parts.append(f"试验田:{field_name}")
+    if survey_stage:
+        meta_parts.append(f"阶段:{survey_stage}")
+    if device_model:
+        meta_parts.append(f"设备:{device_model}")
+    if data_type:
+        meta_parts.append(f"数据类型:{data_type}")
+
+    if meta_parts:
+        parts.append(" ".join(meta_parts))
+
+    return "\n".join(parts)
+
+
 async def _embed_with_retry(payload: dict, max_retries: int = 3) -> dict:
     """调用 embedding API，遇到 429/5xx 时指数退避重试。"""
     cfg = get_config().embedding
