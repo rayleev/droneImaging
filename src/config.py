@@ -21,7 +21,7 @@ class ServerConfig(BaseModel):
     port: int = 8002
     workers: int = 2
     debug: bool = False
-    max_upload_mb: int = Field(500, description="上传文件大小上限（MB）")
+    max_upload_mb: int = Field(1024, description="上传文件大小上限（MB）")
 
 
 class MinioBucketsConfig(BaseModel):
