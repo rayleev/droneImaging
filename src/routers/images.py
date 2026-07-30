@@ -1,6 +1,6 @@
 """影像管理路由
 
-提供影像上传、详情查询、列表查询、状态查询、缩略图等接口。
+提供影像上传、详情查询、列表查询、状态查询、缩略图、搜索、新增、编辑、软删除等接口。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_config, get_public_base_url
@@ -42,15 +42,10 @@ async def upload_image(
     survey_time: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """上传无人机 GeoTIFF 影像
-
-    接收文件和业务字段，创建数据库记录后触发后台处理 Pipeline。
-    """
-    # 校验文件类型
+    """上传无人机 GeoTIFF 影像"""
     if not file.filename or not file.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="仅支持 GeoTIFF 文件（.tif/.tiff）")
 
-    # 校验文件大小（防 OOM）：先读入内存但设上限
     max_upload_bytes = get_config().server.max_upload_mb * 1024 * 1024
     content = await file.read()
     if len(content) > max_upload_bytes:
@@ -59,7 +54,6 @@ async def upload_image(
             detail=f"文件过大（{len(content) / 1024 / 1024:.1f} MB），上限 {get_config().server.max_upload_mb} MB",
         )
 
-    # 解析调查时间
     parsed_survey_time = None
     if survey_time:
         try:
@@ -67,7 +61,6 @@ async def upload_image(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"调查时间格式无效: {survey_time}，请使用 ISO 8601")
 
-    # 创建数据库记录
     image = Image(
         task_id=task_id,
         field_group=field_group,
@@ -87,12 +80,10 @@ async def upload_image(
 
     logger.info(f"影像已上传: {image.id} | file={file.filename} task={task_id}")
 
-    # 保存临时文件并触发后台 Pipeline
     import tempfile
     from pathlib import Path
     from src.services.pipeline import process_image
 
-    # 安全：仅取文件名 basename，防止路径遍历（如 ../../etc/passwd）
     safe_name = Path(file.filename).name if file.filename else "upload.tif"
     if not safe_name:
         safe_name = "upload.tif"
@@ -101,7 +92,6 @@ async def upload_image(
     tmp_path = tmp_dir / safe_name
     tmp_path.write_bytes(content)
 
-    # 异步后台处理（不阻塞响应）
     import asyncio
     asyncio.create_task(_run_pipeline(image.id, str(tmp_path)))
 
@@ -132,7 +122,6 @@ async def get_image_detail(
         raise HTTPException(status_code=404, detail="影像不存在")
 
     detail = ImageDetail.model_validate(image)
-    # 补充 URL
     base = get_public_base_url()
     detail.thumbnail_url = f"{base}/api/images/{image_id}/thumbnail"
     detail.tile_url = f"{base}/api/tiles/{image_id}/{{z}}/{{x}}/{{y}}.png"
@@ -141,42 +130,72 @@ async def get_image_detail(
 
 @router.get("", response_model=ImageListResponse)
 async def list_images(
+    search: Optional[str] = None,
     task_id: Optional[str] = None,
     field_name: Optional[str] = None,
+    field_group: Optional[str] = None,
     survey_stage: Optional[str] = None,
+    data_type: Optional[str] = None,
+    surveyor: Optional[str] = None,
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
     session: AsyncSession = Depends(get_session),
 ):
-    """影像列表（支持过滤 + 分页）"""
-    query = select(Image)
-    count_query = select(func.count(Image.id))
+    """影像列表（支持搜索 + 过滤 + 分页）"""
+    query = select(Image).where(Image.deleted_at.is_(None))
+    count_query = select(func.count(Image.id)).where(Image.deleted_at.is_(None))
 
-    # 过滤条件
+    if search:
+        search_pattern = f"%{search}%"
+        search_filter = or_(
+            Image.task_id.ilike(search_pattern),
+            Image.field_group.ilike(search_pattern),
+            Image.field_name.ilike(search_pattern),
+            Image.survey_stage.ilike(search_pattern),
+            Image.device_model.ilike(search_pattern),
+            Image.data_type.ilike(search_pattern),
+            Image.surveyor.ilike(search_pattern),
+            Image.original_filename.ilike(search_pattern),
+            Image.vlm_description.ilike(search_pattern),
+            Image.vlm_model.ilike(search_pattern),
+            Image.embedding_id.ilike(search_pattern),
+            Image.error_message.ilike(search_pattern),
+            Image.status.ilike(search_pattern),
+            Image.source.ilike(search_pattern),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
     if task_id:
         query = query.where(Image.task_id == task_id)
         count_query = count_query.where(Image.task_id == task_id)
     if field_name:
         query = query.where(Image.field_name == field_name)
         count_query = count_query.where(Image.field_name == field_name)
+    if field_group:
+        query = query.where(Image.field_group == field_group)
+        count_query = count_query.where(Image.field_group == field_group)
     if survey_stage:
         query = query.where(Image.survey_stage == survey_stage)
         count_query = count_query.where(Image.survey_stage == survey_stage)
+    if data_type:
+        query = query.where(Image.data_type == data_type)
+        count_query = count_query.where(Image.data_type == data_type)
+    if surveyor:
+        query = query.where(Image.surveyor == surveyor)
+        count_query = count_query.where(Image.surveyor == surveyor)
     if status:
         query = query.where(Image.status == status)
         count_query = count_query.where(Image.status == status)
 
-    # 总数
     total = (await session.execute(count_query)).scalar() or 0
 
-    # 分页
-    query = query.order_by(Image.created_at.desc())
+    query = query.order_by(Image.upload_time.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     result = await session.execute(query)
     images = result.scalars().all()
 
-    # 补充 URL
     base = get_public_base_url()
     items = []
     for img in images:
@@ -186,6 +205,155 @@ async def list_images(
         items.append(item)
 
     return ImageListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.post("", response_model=ImageDetail, status_code=201)
+async def create_image(
+    task_id: str = Form(..., description="任务编号"),
+    field_group: Optional[str] = Form(None),
+    field_name: Optional[str] = Form(None),
+    survey_stage: Optional[str] = Form(None),
+    device_model: Optional[str] = Form(None),
+    data_type: Optional[str] = Form(None),
+    surveyor: Optional[str] = Form(None),
+    survey_time: Optional[str] = Form(None),
+    status: str = Form("uploaded"),
+    source: str = Form("upload"),
+    error_message: Optional[str] = Form(None),
+    vlm_description: Optional[str] = Form(None),
+    extra_metadata: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """新增影像记录"""
+    parsed_survey_time = None
+    if survey_time:
+        try:
+            parsed_survey_time = datetime.fromisoformat(survey_time)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"调查时间格式无效: {survey_time}")
+
+    parsed_extra = None
+    if extra_metadata:
+        import json
+        try:
+            parsed_extra = json.loads(extra_metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="extra_metadata 格式无效，应为 JSON 字符串")
+
+    image = Image(
+        task_id=task_id,
+        field_group=field_group,
+        field_name=field_name,
+        survey_stage=survey_stage,
+        device_model=device_model,
+        data_type=data_type,
+        surveyor=surveyor,
+        survey_time=parsed_survey_time,
+        original_filename=task_id + ".tif",
+        status=status,
+        source=source,
+        error_message=error_message,
+        vlm_description=vlm_description,
+        extra_metadata=parsed_extra,
+    )
+    session.add(image)
+    await session.commit()
+    await session.refresh(image)
+
+    logger.info(f"影像已创建: {image.id} | task={task_id}")
+
+    detail = ImageDetail.model_validate(image)
+    base = get_public_base_url()
+    detail.thumbnail_url = f"{base}/api/images/{image.id}/thumbnail"
+    detail.tile_url = f"{base}/api/tiles/{image.id}/{{z}}/{{x}}/{{y}}.png"
+    return detail
+
+
+@router.put("/{image_id}", response_model=ImageDetail)
+async def update_image(
+    image_id: uuid.UUID,
+    task_id: Optional[str] = Form(None),
+    field_group: Optional[str] = Form(None),
+    field_name: Optional[str] = Form(None),
+    survey_stage: Optional[str] = Form(None),
+    device_model: Optional[str] = Form(None),
+    data_type: Optional[str] = Form(None),
+    surveyor: Optional[str] = Form(None),
+    survey_time: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
+    source: Optional[str] = Form(None),
+    error_message: Optional[str] = Form(None),
+    vlm_description: Optional[str] = Form(None),
+    extra_metadata: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
+    """编辑影像记录"""
+    image = await session.get(Image, image_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="影像不存在")
+
+    if task_id is not None:
+        image.task_id = task_id
+    if field_group is not None:
+        image.field_group = field_group
+    if field_name is not None:
+        image.field_name = field_name
+    if survey_stage is not None:
+        image.survey_stage = survey_stage
+    if device_model is not None:
+        image.device_model = device_model
+    if data_type is not None:
+        image.data_type = data_type
+    if surveyor is not None:
+        image.surveyor = surveyor
+    if survey_time is not None:
+        try:
+            image.survey_time = datetime.fromisoformat(survey_time) if survey_time else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"调查时间格式无效: {survey_time}")
+    if status is not None:
+        image.status = status
+    if source is not None:
+        image.source = source
+    if error_message is not None:
+        image.error_message = error_message
+    if vlm_description is not None:
+        image.vlm_description = vlm_description
+    if extra_metadata is not None:
+        import json
+        try:
+            image.extra_metadata = json.loads(extra_metadata) if extra_metadata else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="extra_metadata 格式无效，应为 JSON 字符串")
+
+    await session.commit()
+    await session.refresh(image)
+
+    logger.info(f"影像已更新: {image.id}")
+
+    detail = ImageDetail.model_validate(image)
+    base = get_public_base_url()
+    detail.thumbnail_url = f"{base}/api/images/{image.id}/thumbnail"
+    detail.tile_url = f"{base}/api/tiles/{image.id}/{{z}}/{{x}}/{{y}}.png"
+    return detail
+
+
+@router.delete("/{image_id}")
+async def delete_image(
+    image_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """软删除影像记录"""
+    image = await session.get(Image, image_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="影像不存在")
+
+    image.deleted_at = datetime.now()
+    await session.commit()
+
+    logger.info(f"影像已软删除: {image.id}")
+
+    return {"message": "删除成功", "id": str(image.id)}
 
 
 @router.get("/{image_id}/status", response_model=ImageStatusResponse)
@@ -198,7 +366,6 @@ async def get_image_status(
     if image is None:
         raise HTTPException(status_code=404, detail="影像不存在")
 
-    # 状态描述映射
     progress_map = {
         "uploaded": "已上传，等待处理",
         "parsing": "正在解析 GeoTIFF 元数据",

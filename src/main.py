@@ -76,10 +76,14 @@ def create_app() -> FastAPI:
     from src.routers.images import router as images_router
     from src.routers.search import router as search_router
     from src.routers.tiles import router as tiles_router
+    from src.routers.plots import router as plots_router
+    from src.routers.complete import router as complete_router
 
     app.include_router(images_router, prefix="/api/images", tags=["影像管理"])
     app.include_router(search_router, prefix="/api/images", tags=["语义检索"])
     app.include_router(tiles_router, prefix="/api/tiles", tags=["瓦片服务"])
+    app.include_router(plots_router, prefix="/api/plots", tags=["试验小区"])
+    app.include_router(complete_router, prefix="/api/plots", tags=["智能补全"])
 
     # 健康检查（/api/health 供前端经 /api/drone 代理访问）
     @app.get("/health", tags=["系统"])

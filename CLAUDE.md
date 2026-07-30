@@ -75,3 +75,38 @@ All external service connection info lives in `config.yaml` (git-ignored — cop
 ## API base path
 
 All routes are mounted under `/api`: `/api/images/*`, `/api/images/search`, `/api/tiles/*`. Health check is at both `/health` and `/api/health` (the latter for frontend proxy compatibility).
+
+# spec三份文档生成
+当用户说自己对于 droneImaging 的新增或改造功能的初步想法的时候，要用「生成spec三份文档的模板生成spec三份文档的模板工作流」，生成的三份文档放在根目录的docs目录下，每次提出初步想法就生成新的文件夹。
+
+## 生成spec三份文档的模板工作流
+```
+我正在开发一个项目，叫 droneImaging，使用的编程语言是[python]。
+
+每次我会提出一个初步的想法，需要你通过向我提问，帮助我澄清需求、挖掘边缘场景。澄清清楚后共创三份文档保存到项目根目录的docs下，生成对应的文件夹。
+
+# 三份文档的角色与边界
+
+## spec.md
+回答：要解决什么问题、做哪些能力、不做哪些、什么算完成。
+写：背景、目标用户、能力清单（一句话一条）、非功能要求、设计骨架、Out of Scope
+不写：具体函数名 / 参数名 / 默认值 / 错误文本 / 行号 / SDK 类型名（这些是实现细节，spec 改一次就过期，维护爆炸）
+
+## tasks.md
+回答：按什么顺序做、每步动什么文件。
+- 5~15 个任务，每个能在一次专注会话内完成
+- 每个任务标注：影响文件、依赖任务、参考资料定位（精确到函数/行号都可以）
+- 最后一定有「接入主流程」+「端到端验证」两个任务
+
+## checklist.md
+每一项必须可勾选、可观测，不许写「实现完整」「质量良好」。
+- 把 spec 里被砍掉的具体值（错误文本、默认值、阈值）放进来作为验收项
+- 写法举例：「`grep -r X` 返回 ≥3 条」「输入 Y 看到输出 Z」
+- 至少一条端到端验收
+
+我的初步想法是:[我的想法]
+哪些留给后续章节不做:[不做什么]
+
+请每轮只问几个关键点，不要一次性问完。使用 SDK 时务必通过 context7 MCP 等文档工具查最新 API(函数签名、参数顺序、类型名)，不要凭记忆写。
+
+请开始你的提问。

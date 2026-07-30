@@ -32,7 +32,7 @@ class Image(Base):
     以及 VLM 描述和向量检索关联信息。
     """
 
-    __tablename__ = "images"
+    __tablename__ = "pa_di_image"
     __table_args__ = (
         {"comment": "无人机影像注册表"},
     )
@@ -197,6 +197,10 @@ class Image(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now(),
         comment="记录更新时间",
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="软删除时间",
     )
 
     def __repr__(self) -> str:

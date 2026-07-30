@@ -59,16 +59,20 @@ async def get_tile(
     # 1. 查询影像记录，获取 COG 路径
     image = await session.get(Image, image_id)
     if image is None:
+        logger.warning(f"Tile request: image not found {image_id}")
         raise HTTPException(status_code=404, detail="影像不存在")
     if not image.cog_path:
+        logger.warning(f"Tile request: COG path empty {image_id}")
         raise HTTPException(status_code=404, detail="COG 尚未生成")
     if image.status != "ready":
+        logger.warning(f"Tile request: image not ready {image_id} status={image.status}")
         raise HTTPException(status_code=409, detail=f"影像处理中: {image.status}")
 
     # 2. 获取 MinIO 预签名 URL
     cfg = get_config()
     try:
         cog_url = get_presigned_url(cfg.minio.buckets.cog, image.cog_path)
+        logger.debug(f"Tile presigned URL generated for {image_id}")
     except Exception as e:
         logger.error(f"生成预签名 URL 失败: {e}")
         raise HTTPException(status_code=500, detail="存储访问失败")

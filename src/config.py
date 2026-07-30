@@ -1,4 +1,4 @@
-"""无人机影像服务 — 配置加载模块
+﻿"""无人机影像服务 — 配置加载模块
 
 从 config.yaml 读取所有外部服务连接信息和处理参数，
 通过 Pydantic 模型校验，全局单例访问。
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -71,6 +71,15 @@ class VlmConfig(BaseModel):
     max_retries: int = 3
 
 
+
+class LlmConfig(BaseModel):
+    provider: str = "Yzw"
+    api_url: str = "http://182.92.166.143:3200/v1"
+    api_key: str = ""
+    model: str = "DSv4-flash"
+    timeout: int = 60
+    max_retries: int = 3
+
 class TiandituConfig(BaseModel):
     key: str = "your-tianditu-key"
 
@@ -84,6 +93,59 @@ class ProcessingConfig(BaseModel):
 
 # ── 顶层配置 ─────────────────────────────────────────────────
 
+
+
+class SamServiceConfig(BaseModel):
+    enabled: bool = True
+    url: str = "http://127.0.0.1:8003"
+    timeout: float = 60.0
+
+class SamConfig(BaseModel):
+    model_type: str = "vit_h"
+    checkpoint: Optional[str] = None
+
+
+class CompletionLlmConfig(BaseModel):
+    api_url: Optional[str] = None
+    model: Optional[str] = None
+    timeout: Optional[float] = None
+
+
+class CompletionVlmConfig(BaseModel):
+    api_url: Optional[str] = None
+    model: Optional[str] = None
+    timeout: Optional[float] = None
+
+
+class CompletionConfig(BaseModel):
+    strategy: str = "sam_llm"
+    sam: SamConfig = Field(default_factory=SamConfig)
+    sam_service: SamServiceConfig = Field(default_factory=SamServiceConfig)
+    llm: CompletionLlmConfig = Field(default_factory=CompletionLlmConfig)
+    vlm: CompletionVlmConfig = Field(default_factory=CompletionVlmConfig)
+    return_debug_info: bool = True
+
+    def resolve_llm(self, default: LlmConfig) -> LlmConfig:
+        """解析 LLM 配置，为空时使用顶层默认值"""
+        return LlmConfig(
+            api_url=self.llm.api_url or default.api_url,
+            model=self.llm.model or default.model,
+            timeout=self.llm.timeout or default.timeout,
+        )
+
+    def resolve_vlm(self, default: VlmConfig) -> VlmConfig:
+        """解析 VLM 配置，为空时使用顶层默认值"""
+        return VlmConfig(
+            api_url=self.vlm.api_url or default.api_url,
+            model=self.vlm.model or default.model,
+            timeout=self.vlm.timeout or default.timeout,
+        )
+
+SamServiceConfig.model_rebuild()
+SamConfig.model_rebuild()
+CompletionLlmConfig.model_rebuild()
+CompletionVlmConfig.model_rebuild()
+CompletionConfig.model_rebuild()
 class AppConfig(BaseModel):
     """应用全局配置，对应 config.yaml 顶层结构"""
     server: ServerConfig = ServerConfig()
@@ -92,8 +154,10 @@ class AppConfig(BaseModel):
     milvus: MilvusConfig = MilvusConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     vlm: VlmConfig = VlmConfig()
+    llm: LlmConfig = LlmConfig()
     tianditu: TiandituConfig = TiandituConfig()
     processing: ProcessingConfig = ProcessingConfig()
+    completion: CompletionConfig = CompletionConfig()
 
 
 # ── 全局单例 ─────────────────────────────────────────────────
@@ -170,6 +234,15 @@ def _apply_env_overrides(cfg: AppConfig) -> None:
     })
     if vlm_override:
         cfg.vlm = cfg.vlm.model_validate({**cfg.vlm.model_dump(), **vlm_override})
+
+    # LLM
+    llm_override = _env_dict({
+        "api_key": os.environ.get("LLM_API_KEY"),
+        "api_url": os.environ.get("LLM_API_URL"),
+        "model": os.environ.get("LLM_MODEL"),
+    })
+    if llm_override:
+        cfg.llm = cfg.llm.model_validate({**cfg.llm.model_dump(), **llm_override})
 
     # Embedding
     embedding_override = _env_dict({

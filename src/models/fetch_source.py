@@ -23,7 +23,7 @@ class FetchSource(Base):
     用于按元数据从外部系统拉取原始影像。
     """
 
-    __tablename__ = "fetch_sources"
+    __tablename__ = "pa_di_fetch_source"
     __table_args__ = (
         {"comment": "外部存储源配置表（P1 预留）"},
     )

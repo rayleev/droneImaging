@@ -57,6 +57,7 @@ class ImageStatusResponse(BaseModel):
 
 
 class ImageListItem(BaseModel):
+    deleted_at: Optional[datetime] = None
     """影像列表项（精简字段）"""
     id: uuid.UUID
     task_id: str
@@ -130,3 +131,57 @@ class ImageListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── 试验小区划分 ─────────────────────────────────────────────
+
+class PlotDivideRequest(BaseModel):
+    """试验小区划分请求"""
+    image_id: uuid.UUID = Field(..., description="影像 ID")
+    region: Optional[dict] = Field(None, description="绘制区域 GeoJSON Polygon 或 bbox [minLon,minLat,maxLon,maxLat]，为空则用整幅影像")
+    n_rows: Optional[int] = Field(None, description="行数（与 n_cols 一起使用）")
+    n_cols: Optional[int] = Field(None, description="列数（与 n_rows 一起使用）")
+    plot_width_m: Optional[float] = Field(None, description="每个小区宽度（米），替代 n_cols")
+    plot_height_m: Optional[float] = Field(None, description="每个小区高度（米），替代 n_rows")
+    rotation_deg: float = Field(0.0, description="旋转角度（度），绕区域中心")
+    label_scheme: str = Field("grid", description="编号方案: grid(A1,A2...) 或 linear(1,2,3...)")
+
+
+class PlotCell(BaseModel):
+    """单个小区"""
+    id: str = Field(..., description="唯一标识")
+    label: str = Field(..., description="编号标签（如 A1、B2）")
+    row: int = Field(..., description="行索引")
+    col: int = Field(..., description="列索引")
+    bbox: list = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    polygon: list = Field(..., description="WGS84 多边形坐标环 [[[lon,lat],...]]")
+    area_m2: float = Field(..., description="面积（平方米）")
+
+
+class PlotDivideResponse(BaseModel):
+    """试验小区划分响应"""
+    image_id: uuid.UUID
+    total: int = Field(..., description="小区总数")
+    region: dict = Field(..., description="实际使用的区域")
+    rotation_deg: float = Field(..., description="旋转角度")
+    crs: str = Field(..., description="坐标系")
+    plots: List[PlotCell]
+
+# ── 智能补全 ─────────────────────────────────────────────────
+
+class CompleteRequest(BaseModel):
+    """智能补全请求"""
+    image_id: uuid.UUID = Field(..., description="影像 ID")
+    example_region: dict = Field(..., description="用户绘制的示例区域 GeoJSON Polygon")
+    description: str = Field(..., description="自然语言描述，如'按这个大小，5行3列布满整个区域'")
+
+
+class CompleteResponse(BaseModel):
+    """智能补全响应"""
+    image_id: uuid.UUID
+    total: int = Field(..., description="小区总数")
+    n_rows: int = Field(..., description="行数")
+    n_cols: int = Field(..., description="列数")
+    region: dict = Field(..., description="实际使用的区域")
+    example_size_m: dict = Field(..., description="示例区域尺寸（米）")
+    plots: List[PlotCell]
