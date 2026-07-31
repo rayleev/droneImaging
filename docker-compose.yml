@@ -1,140 +1,47 @@
-# droneImaging — 本地开发完整栈（Docker Compose）
+# ============================================================
+# droneImaging — Docker Compose（精简版 — 仅应用服务）
+# ============================================================
+# 基础设施（postgres、minio、milvus、etcd 等）已统一到
+# phenomicsAgent/docker-compose.infra.yml，本文件仅保留应用服务。
 #
-# 一键启动: docker compose up -d
-# 查看日志: docker compose logs -f drone-imaging
-# 停止:     docker compose down
+# 启动应用:
+#   docker compose up -d
+# 查看日志:
+#   docker compose logs -f drone-imaging
 #
-# 包含服务:
-#   postgres     - 业务元数据 (5432)
-#   minio        - 对象存储 drone-raw/cog/thumb (9000/9001 控制台)
-#   milvus-minio - Milvus 内部存储 (9002/9003，与上方 minio 端口错开)
-#   etcd         - Milvus 元数据存储 (2379)
-#   milvus       - 向量数据库 (19530)
-#   drone-imaging- 本服务 (8002)
-#
-# 生产环境建议将依赖服务替换为独立部署实例，仅容器化本服务。
+# 注意: 首次启动需确保 config.yaml 已配置（cp config.yaml.example config.yaml）
+# ============================================================
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: drone-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Admin123!
-      POSTGRES_DB: drone_imaging
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  minio:
-    image: minio/minio:latest
-    container_name: drone-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Milvus 依赖的存储与元数据服务
-  milvus-minio:
-    image: minio/minio:latest
-    container_name: drone-milvus-minio
-    restart: unless-stopped
-    command: server /milvus-data --console-address ":9003"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9002:9000"
-      - "9003:9001"
-    volumes:
-      - milvus_minio_data:/milvus-data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.5
-    container_name: drone-etcd
-    restart: unless-stopped
-    environment:
-      ETCD_AUTO_COMPACTION_MODE: revision
-      ETCD_AUTO_COMPACTION_RETENTION: "1000"
-      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
-      ETCD_SNAPSHOT_COUNT: "50000"
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-    volumes:
-      - etcd_data:/etcd
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
-  milvus:
-    image: milvusdb/milvus:v2.4.5
-    container_name: drone-milvus
-    restart: unless-stopped
-    command: ["milvus", "run", "standalone"]
-    environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
-    ports:
-      - "19530:19530"
-      - "9091:9091"
-    volumes:
-      - milvus_data:/var/lib/milvus
-    depends_on:
-      etcd:
-        condition: service_healthy
-      milvus-minio:
-        condition: service_healthy
-
   drone-imaging:
     build:
       context: .
       dockerfile: Dockerfile
+    image: drone-imaging:latest
     container_name: drone-imaging
     restart: unless-stopped
+    ports:
+      - "8005:8002"
     environment:
       # 客户端可访问的地址（生成瓦片/缩略图 URL 用）
-      DRONE_PUBLIC_BASE_URL: http://localhost:8002
-    ports:
-      - "8002:8002"
-    # 挂载真实配置文件（覆盖镜像内的模板）。首次使用请先复制并填写 config.yaml:
-    #   cp config.yaml.example config.yaml
+      DRONE_PUBLIC_BASE_URL: ${DRONE_PUBLIC_BASE_URL:-http://localhost:8005}
+      TZ: Asia/Shanghai
     volumes:
+      # 挂载配置文件（覆盖镜像内的模板）
       - ./config.yaml:/app/config.yaml:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      milvus:
-        condition: service_started
+    networks:
+      - infra
+      - phenomics-net
 
-volumes:
-  postgres_data:
-  minio_data:
-  milvus_minio_data:
-  etcd_data:
-  milvus_data:
+# ==========================================================
+# Networks
+# ==========================================================
+networks:
+  # 共享基础设施网络（由 docker-compose.infra.yml 创建）
+  infra:
+    external: true
+    name: infra
+  # phenomics 应用网络（供 phenomics-frontend nginx 反向代理访问）
+  phenomics-net:
+    external: true
+    name: phenomics-net

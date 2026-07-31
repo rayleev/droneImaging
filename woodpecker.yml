@@ -2,10 +2,12 @@
 # 在网页上手动触发执行
 #
 # 流程: build → deploy（停旧 → 起新 → 健康检查 → 失败回滚）
-# 改进: 新容器启动后轮询 /health，超时则自动回滚到旧镜像
+#
+# 网络:
+#   infra         → 共享基础设施（postgres、minio、milvus 等）
+#   phenomics-net → 与 phenomics-backend 通信
 #
 # 健康检查用独立 curl 容器接入 phenomics-net，通过容器名访问。
-# 避免 deploy 容器在 bridge 网络时 curl localhost 指向自己的问题。
 
 steps:
   - name: build
@@ -22,25 +24,30 @@ steps:
         set -e
 
         # ── 1. 写入配置 ──
-        # 配置统一存放在 /home/root01/deploy/drone-imaging/config.yaml
-        # rm -rf 清除任何残留（文件或旧目录），确保 echo 写入成功。
         DEPLOY_CFG=/home/root01/deploy/drone-imaging/config.yaml
         rm -rf "$DEPLOY_CFG"
         echo "$CONFIG_YAML" > "$DEPLOY_CFG"
         echo "配置已写入 $DEPLOY_CFG"
 
-        # ── 2. 记录旧镜像（用于回滚）──
+        # ── 2. 确保网络存在 ──
+        docker network inspect infra >/dev/null 2>&1 || docker network create infra
+        docker network inspect phenomics-net >/dev/null 2>&1 || docker network create phenomics-net
+
+        # ── 3. 记录旧镜像（用于回滚）──
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' drone-imaging 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
-        # ── 3. 停旧容器 ──
+        # ── 4. 停旧容器 ──
         docker stop drone-imaging 2>/dev/null || true
         docker rm -f drone-imaging 2>/dev/null || true
         echo "旧容器已清理"
 
-        # ── 4. 启动新容器（加入 phenomics-net，使 curl 容器可通过容器名访问）──
+        # ── 5. 启动新容器（加入 infra + phenomics-net）──
+        # infra 网络: 访问 postgres/minio/milvus 等基础设施（用容器名）
+        # phenomics-net: 供 phenomics-frontend nginx 反向代理访问
         docker run -d \
           --name drone-imaging \
+          --network infra \
           --network phenomics-net \
           --restart unless-stopped \
           -p 8005:8002 \
@@ -49,8 +56,7 @@ steps:
           drone-imaging:latest
         echo "新容器已启动"
 
-        # ── 5. 健康检查（最多 60s）──
-        # 用独立 curl 容器接入 phenomics-net，通过容器名访问服务。
+        # ── 6. 健康检查（最多 60s）──
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
           if docker run --rm --network phenomics-net curlimages/curl -fsS --max-time 2 http://drone-imaging:8002/health > /dev/null 2>&1; then
@@ -61,13 +67,14 @@ steps:
           sleep 3
         done
 
-        # ── 6. 健康检查失败 → 回滚 ──
+        # ── 7. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
         docker stop drone-imaging 2>/dev/null || true
         docker rm -f drone-imaging 2>/dev/null || true
         if [ -n "$OLD_IMAGE" ]; then
           docker run -d \
             --name drone-imaging \
+            --network infra \
             --network phenomics-net \
             --restart unless-stopped \
             -p 8005:8002 \

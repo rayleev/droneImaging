@@ -7,6 +7,7 @@ server:
   port: 8002
   workers: 2
   debug: true
+  max_upload_mb: 1024                # 上传文件大小上限（MB）
 
 # MinIO 对象存储
 minio:
@@ -29,24 +30,34 @@ milvus:
   port: 19530
   collection: "image_vectors"
   vector_dim: 1024                    # embedding 维度，需与 embedding 模型匹配
+  auto_reset_collection: false        # 启动时是否删除并重建 collection（schema 迁移后改回 false）
 
 # Embedding 模型
 embedding:
-  api_url: "http://localhost:18011/graph/v1/vector/embed"   # embedding 服务地址
+  api_url: "http://localhost:18011/graph/v1/vector/embed"
   api_key: "your-embedding-api-key"
   model: "BAAI/bge-m3"
   batch_size: 8
 
 # VLM 视觉语言模型
 vlm:
-  provider: "qwen-vl"                 # 可切换: qwen-vl / local
-  api_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  provider: "zhipu"                   # 可切换: zhipu / qwen-vl / local
+  api_url: "https://open.bigmodel.cn/api/paas/v4"
   api_key: "your-vlm-api-key"
-  model: "qwen-vl-max"
+  model: "glm-4v-flash"
   prompt_file: "prompts/vlm_describe.txt"
   max_image_size: 1024                # 发送给 VLM 的最大图片边长（像素）
   timeout: 60                         # API 超时（秒）
   max_retries: 3                      # 最大重试次数
+
+# LLM 模型
+llm:
+  provider: "Yzw"
+  api_url: "http://localhost:8080/v1"
+  api_key: "your-llm-api-key"
+  model: "DSv4-flash"
+  timeout: 60
+  max_retries: 3
 
 # 天地图
 tianditu:
@@ -58,3 +69,21 @@ processing:
   cog_overview_levels: [2, 4, 8, 16]  # overview 金字塔层级
   thumbnail_size: 512                 # 缩略图长边（像素）
   max_concurrent_tasks: 3             # 后台处理最大并发数
+
+# 试验小区智能补全
+completion:
+  strategy: vlm_direct                # 策略选择: sam_llm / vlm / sam_vlm / sam_template / vlm_direct
+
+  sam_service:
+    url: "http://localhost:8003"      # SAM 外部服务地址
+    timeout: 60.0
+
+  llm:
+    api_url: null                      # 设为 null 则复用顶层 llm 配置
+    model: null
+    timeout: null
+
+  vlm:
+    api_url: null                      # 设为 null 则复用顶层 vlm 配置
+    model: null
+    timeout: null
