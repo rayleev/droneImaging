@@ -45,15 +45,18 @@ steps:
         # ── 5. 启动新容器（加入 infra + phenomics-net）──
         # infra 网络: 访问 postgres/minio/milvus 等基础设施（用容器名）
         # phenomics-net: 供 phenomics-frontend nginx 反向代理访问
+        # docker run 只支持单个 --network，启动后用 docker network connect 加入第二个网络
         docker run -d \
           --name drone-imaging \
           --network infra \
-          --network phenomics-net \
           --restart unless-stopped \
           -p 8005:8002 \
           -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
           -v "$DEPLOY_CFG:/app/config.yaml:ro" \
           drone-imaging:latest
+
+        # 加入第二个网络
+        docker network connect phenomics-net drone-imaging
         echo "新容器已启动"
 
         # ── 6. 健康检查（最多 60s）──
@@ -75,12 +78,12 @@ steps:
           docker run -d \
             --name drone-imaging \
             --network infra \
-            --network phenomics-net \
             --restart unless-stopped \
             -p 8005:8002 \
             -e DRONE_PUBLIC_BASE_URL=http://10.33.105.145:8005 \
             -v "$DEPLOY_CFG:/app/config.yaml:ro" \
             $OLD_IMAGE
+          docker network connect phenomics-net drone-imaging
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
           echo "无旧镜像可回滚"
