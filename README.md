@@ -23,7 +23,7 @@
 | 向量数据库 | Milvus（pymilvus） |
 | Embedding | BGE-M3（可配置） |
 | VLM | Qwen-VL / GLM-4V（可配置切换） |
-| LLM | DSv4-flash 等（用于小区补全的描述解析） |
+| LLM | glm-52 等（用于小区补全的描述解析） |
 | SAM | 远程分割服务（可选，端口 8003） |
 | 配置管理 | config.yaml（Pydantic Settings） |
 

@@ -55,7 +55,7 @@ llm:
   provider: "Yzw"
   api_url: "http://localhost:8080/v1"
   api_key: "your-llm-api-key"
-  model: "DSv4-flash"
+  model: "glm-52"
   timeout: 60
   max_retries: 3
 

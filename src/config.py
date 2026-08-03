@@ -76,7 +76,7 @@ class LlmConfig(BaseModel):
     provider: str = "Yzw"
     api_url: str = "http://182.92.166.143:3200/v1"
     api_key: str = ""
-    model: str = "DSv4-flash"
+    model: str = "glm-52"
     timeout: int = 60
     max_retries: int = 3
 
