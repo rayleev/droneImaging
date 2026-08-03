@@ -13,8 +13,8 @@ from src.config import get_config
 class CompletionConfig:
     """补全服务配置"""
     
-    # 策略选择: "sam_llm" 或 "vlm"
-    strategy: str = "sam_llm"
+    # 策略选择: "vlm_sam"（唯一策略）
+    strategy: str = "vlm_sam"
     
     # SAM 远程服务配置
     sam_service_url: str = "http://127.0.0.1:8003"

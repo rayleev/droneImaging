@@ -1,7 +1,7 @@
 """智能补全路由
 
 基于用户绘制的示例区域和自然语言描述，自动补全剩余试验小区。
-支持通过配置切换策略：sam_llm、vlm 或 sam_vlm。
+唯一策略：vlm_sam（先 SAM 精确分割示例小区 → VLM 识别大边界 → 网格复制）。
 """
 
 from __future__ import annotations
@@ -17,11 +17,7 @@ from src.database import get_session
 from src.models.image import Image
 from src.schemas.image import CompleteRequest, CompleteResponse
 from src.services.plot_completion import (
-    SamLLMStrategy,
-    VLMStrategy,
-    SamVLMStrategy,
-    SamTemplateStrategy,
-    VLMDirectStrategy,
+    VLMSamStrategy,
     get_completion_config,
     CompletionRequest as InternalCompletionRequest,
 )
@@ -30,18 +26,10 @@ router = APIRouter()
 
 
 def _get_strategy():
-    """根据配置选择补全策略"""
+    """获取补全策略（唯一策略 vlm_sam，配置值仅作日志参考）"""
     config = get_completion_config()
-    if config.strategy == "vlm_direct":
-        return VLMDirectStrategy(config)
-    elif config.strategy == "sam_template":
-        return SamTemplateStrategy(config)
-    elif config.strategy == "sam_vlm":
-        return SamVLMStrategy(config)
-    elif config.strategy == "vlm":
-        return VLMStrategy(config)
-    else:
-        return SamLLMStrategy(config)
+    # 唯一策略，无论 config.strategy 为何值都返回 VLMSamStrategy
+    return VLMSamStrategy(config)
 
 
 @router.post("/complete", response_model=CompleteResponse)
@@ -93,13 +81,16 @@ async def complete_plots(
             "bbox": p.bbox,
             "polygon": p.polygon,
             "area_m2": p.area_m2,
+            "status": p.status,
         })
 
-    logger.info(f"智能补全完成: {comp_result.total} 个小区 ({comp_result.n_rows}行 x {comp_result.n_cols}列)")
+    # total 只统计有效小区（status != skip）
+    total_ok = sum(1 for p in comp_result.plots if p.status != "skip")
+    logger.info(f"智能补全完成: 有效 {total_ok} / 共 {comp_result.total} 个小区 ({comp_result.n_rows}行 x {comp_result.n_cols}列)")
 
     response_data = {
         "image_id": str(image.id),
-        "total": comp_result.total,
+        "total": total_ok,  # 只统计有效小区（status != skip）
         "n_rows": comp_result.n_rows,
         "n_cols": comp_result.n_cols,
         "region": comp_result.region,

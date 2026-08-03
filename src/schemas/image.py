@@ -156,6 +156,7 @@ class PlotCell(BaseModel):
     bbox: list = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
     polygon: list = Field(..., description="WGS84 多边形坐标环 [[[lon,lat],...]]")
     area_m2: float = Field(..., description="面积（平方米）")
+    status: str = Field("ok", description="ok / skip（异常小区如被树遮挡、非试验田）")
 
 
 class PlotDivideResponse(BaseModel):

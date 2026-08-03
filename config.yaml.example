@@ -72,7 +72,7 @@ processing:
 
 # 试验小区智能补全
 completion:
-  strategy: vlm_direct                # 策略选择: sam_llm / vlm / sam_vlm / sam_template / vlm_direct
+  strategy: vlm_sam                   # 策略选择: vlm_sam（唯一策略，先 SAM 精确分割示例小区→VLM 识别大边界→网格复制）
 
   sam_service:
     url: "http://localhost:8003"      # SAM 外部服务地址

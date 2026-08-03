@@ -18,6 +18,7 @@ class PlotCell:
     bbox: list  # [min_lon, min_lat, max_lon, max_lat]
     polygon: list  # [[[lon, lat], ...]]
     area_m2: float
+    status: str = "ok"  # ok / skip（被树遮挡、非试验田等异常）
 
 
 @dataclass

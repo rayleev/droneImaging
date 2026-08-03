@@ -1,4 +1,4 @@
-﻿"""无人机影像服务 — 配置加载模块
+"""无人机影像服务 — 配置加载模块
 
 从 config.yaml 读取所有外部服务连接信息和处理参数，
 通过 Pydantic 模型校验，全局单例访问。
@@ -118,7 +118,7 @@ class CompletionVlmConfig(BaseModel):
 
 
 class CompletionConfig(BaseModel):
-    strategy: str = "sam_llm"
+    strategy: str = "vlm_sam"
     sam: SamConfig = Field(default_factory=SamConfig)
     sam_service: SamServiceConfig = Field(default_factory=SamServiceConfig)
     llm: CompletionLlmConfig = Field(default_factory=CompletionLlmConfig)
