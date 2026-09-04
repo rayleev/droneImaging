@@ -39,9 +39,13 @@ def ensure_collection() -> None:
         - id: VARCHAR(64), 主键
         - text_vector: FLOAT_VECTOR(dim), 文本 embedding
         - image_vector: FLOAT_VECTOR(dim), 图片 embedding（预留）
-        - task_id: VARCHAR(100), 标量过滤
-        - field_name: VARCHAR(200), 标量过滤
-        - survey_stage: VARCHAR(100), 标量过滤
+        - task_id / field_name / survey_stage: 旧业务字段标量过滤
+        - crop_type / growth_stage: VLM 结构化输出标量过滤
+        - mission_id / plot_id / experiment_id / site_id / plot_code:
+          agri_research 关联键标量过滤（sync 来源影像）
+        - flight_date / product_type / variety / treatment / data_source_type:
+          分面标量过滤
+        - granularity: 粒度过滤（plot 小区级 / mission 整架次级）
     """
     _ensure_connection()
     cfg = get_config().milvus
@@ -57,11 +61,27 @@ def ensure_collection() -> None:
         FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
         FieldSchema(name="text_vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
         FieldSchema(name="image_vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
+        # 旧业务字段
         FieldSchema(name="task_id", dtype=DataType.VARCHAR, max_length=100),
         FieldSchema(name="field_name", dtype=DataType.VARCHAR, max_length=200),
         FieldSchema(name="survey_stage", dtype=DataType.VARCHAR, max_length=100),
+        # VLM 结构化输出
         FieldSchema(name="crop_type", dtype=DataType.VARCHAR, max_length=100),
         FieldSchema(name="growth_stage", dtype=DataType.VARCHAR, max_length=100),
+        # agri_research 关联键
+        FieldSchema(name="mission_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="plot_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="experiment_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="site_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="plot_code", dtype=DataType.VARCHAR, max_length=100),
+        # 分面过滤
+        FieldSchema(name="flight_date", dtype=DataType.VARCHAR, max_length=10),
+        FieldSchema(name="product_type", dtype=DataType.VARCHAR, max_length=50),
+        FieldSchema(name="variety", dtype=DataType.VARCHAR, max_length=200),
+        FieldSchema(name="treatment", dtype=DataType.VARCHAR, max_length=500),
+        FieldSchema(name="data_source_type", dtype=DataType.VARCHAR, max_length=50),
+        # 粒度
+        FieldSchema(name="granularity", dtype=DataType.VARCHAR, max_length=20),
     ]
     schema = CollectionSchema(fields=fields, description="无人机影像语义向量")
 
@@ -77,11 +97,13 @@ def ensure_collection() -> None:
     collection.create_index(field_name="image_vector", index_params=index_params)
 
     # 创建标量索引（加速过滤）
-    collection.create_index(field_name="task_id", index_name="idx_task_id")
-    collection.create_index(field_name="field_name", index_name="idx_field_name")
-    collection.create_index(field_name="survey_stage", index_name="idx_survey_stage")
-    collection.create_index(field_name="crop_type", index_name="idx_crop_type")
-    collection.create_index(field_name="growth_stage", index_name="idx_growth_stage")
+    for scalar_field in [
+        "task_id", "field_name", "survey_stage", "crop_type", "growth_stage",
+        "mission_id", "plot_id", "experiment_id", "site_id", "plot_code",
+        "flight_date", "product_type", "variety", "treatment", "data_source_type",
+        "granularity",
+    ]:
+        collection.create_index(field_name=scalar_field, index_name=f"idx_{scalar_field}")
 
     logger.info(f"Milvus collection 已创建: {collection_name} (dim={dim})")
 
@@ -113,6 +135,17 @@ async def insert_vector(
     survey_stage: str = "",
     crop_type: str = "",
     growth_stage: str = "",
+    mission_id: str = "",
+    plot_id: str = "",
+    experiment_id: str = "",
+    site_id: str = "",
+    plot_code: str = "",
+    flight_date: str = "",
+    product_type: str = "",
+    variety: str = "",
+    treatment: str = "",
+    data_source_type: str = "",
+    granularity: str = "plot",
     image_vector: Optional[List[float]] = None,
 ) -> None:
     """插入一条向量记录。
@@ -120,12 +153,14 @@ async def insert_vector(
     Args:
         image_id: 影像 UUID（字符串）
         text_vector: 文本 embedding 向量
-        task_id: 任务编号（标量过滤用）
-        field_name: 试验田名称
-        survey_stage: 调查阶段
-        crop_type: 作物类型（标量过滤用，来自 VLM 结构化输出）
-        growth_stage: 生长阶段（标量过滤用，来自 VLM 结构化输出）
+        task_id/field_name/survey_stage: 旧业务字段（标量过滤用）
+        crop_type/growth_stage: VLM 结构化输出（标量过滤用）
+        mission_id/plot_id/experiment_id/site_id/plot_code: agri_research 关联键
+        flight_date/product_type/variety/treatment/data_source_type: 分面过滤
         image_vector: 图片 embedding（预留，默认零向量）
+
+    Note:
+        treatment 在 Milvus 中限制 max_length=500，调用方应截断超长值。
     """
     _ensure_connection()
     cfg = get_config().milvus
@@ -137,6 +172,9 @@ async def insert_vector(
     if image_vector is None:
         image_vector = [0.0] * dim
 
+    # treatment 截断保护
+    safe_treatment = (treatment or "")[:500]
+
     data = [
         [image_id],           # id
         [text_vector],        # text_vector
@@ -146,6 +184,17 @@ async def insert_vector(
         [survey_stage],       # survey_stage
         [crop_type],          # crop_type
         [growth_stage],       # growth_stage
+        [mission_id],         # mission_id
+        [plot_id],            # plot_id
+        [experiment_id],      # experiment_id
+        [site_id],            # site_id
+        [plot_code],          # plot_code
+        [flight_date],        # flight_date
+        [product_type],       # product_type
+        [variety],            # variety
+        [safe_treatment],     # treatment
+        [data_source_type],   # data_source_type
+        [granularity],        # granularity
     ]
 
     collection.insert(data)
@@ -154,24 +203,65 @@ async def insert_vector(
 
 
 # 允许作为 Milvus 标量过滤的字段白名单（防注入）
-_FILTERABLE_FIELDS = frozenset({"task_id", "field_name", "survey_stage", "crop_type", "growth_stage"})
+_FILTERABLE_FIELDS = frozenset({
+    "task_id", "field_name", "survey_stage", "crop_type", "growth_stage",
+    "mission_id", "plot_id", "experiment_id", "site_id", "plot_code",
+    "flight_date", "product_type", "variety", "treatment", "data_source_type",
+    "granularity",
+})
 
 
-def _build_filter_expr(filters: Dict[str, str]) -> Optional[str]:
+def _esc(value: str) -> str:
+    """转义字符串字面量中的双引号，防止注入逃逸。"""
+    return (value or "").replace('"', "")
+
+
+def _build_filter_expr(
+    filters: Optional[Dict[str, str]] = None,
+    in_filters: Optional[Dict[str, List[str]]] = None,
+    range_filters: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Optional[str]:
     """构建 Milvus 过滤表达式（安全版本）。
 
     - 仅接受白名单内的字段名（防 key 注入）
     - 对值中的双引号做转义（防 value 注入逃逸字符串字面量）
+
+    Args:
+        filters: 等值过滤，如 {"task_id": "xxx"}
+        in_filters: IN 过滤，如 {"plot_id": ["id1", "id2"]}（用于两阶段性状过滤）
+        range_filters: 范围过滤，如 {"flight_date": {"gte": "2025-07-01", "lte": "2025-07-31"}}
+            支持的 op: gte / lte / gt / lt
     """
-    if not filters:
-        return None
     conditions = []
-    for key, value in filters.items():
-        if not value or key not in _FILTERABLE_FIELDS:
-            continue
-        # 转义双引号，防止值逃逸出字符串字面量
-        safe_value = value.replace('"', "")
-        conditions.append(f'{key} == "{safe_value}"')
+
+    # 等值
+    if filters:
+        for key, value in filters.items():
+            if not value or key not in _FILTERABLE_FIELDS:
+                continue
+            conditions.append(f'{key} == "{_esc(value)}"')
+
+    # IN（列表）
+    if in_filters:
+        for key, values in in_filters.items():
+            if not values or key not in _FILTERABLE_FIELDS:
+                continue
+            safe_values = [f'"{_esc(v)}"' for v in values if v]
+            if not safe_values:
+                continue
+            # Milvus 对超长 IN 列表有上限（默认 1024），调用方应控制规模
+            conditions.append(f'{key} in [{", ".join(safe_values)}]')
+
+    # 范围
+    if range_filters:
+        for key, ops in range_filters.items():
+            if not ops or key not in _FILTERABLE_FIELDS:
+                continue
+            for op, value in ops.items():
+                if op not in ("gte", "lte", "gt", "lt") or not value:
+                    continue
+                conditions.append(f'{key} {op} "{_esc(value)}"')
+
     return " and ".join(conditions) if conditions else None
 
 
@@ -179,16 +269,20 @@ async def search_vectors(
     query_vector: List[float],
     top_k: int = 10,
     filters: Optional[Dict[str, str]] = None,
+    in_filters: Optional[Dict[str, List[str]]] = None,
+    range_filters: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> List[Dict]:
     """向量相似度搜索。
 
     Args:
         query_vector: 查询向量
         top_k: 返回数量
-        filters: 标量过滤条件（如 {"task_id": "xxx"}）
+        filters: 等值过滤条件（如 {"task_id": "xxx"}）
+        in_filters: IN 过滤（如 {"plot_id": [...]}，两阶段性状过滤用）
+        range_filters: 范围过滤（如 {"flight_date": {"gte": ..., "lte": ...}}）
 
     Returns:
-        [{"id": "...", "score": 0.87}, ...] 按相似度降序
+        [{"id": "...", "score": 0.87, <output_fields>}, ...] 按相似度降序
     """
     _ensure_connection()
     cfg = get_config().milvus
@@ -197,9 +291,16 @@ async def search_vectors(
     collection.load()
 
     # 构建过滤表达式（安全版本：字段白名单 + 值转义）
-    expr = _build_filter_expr(filters)
+    expr = _build_filter_expr(filters, in_filters, range_filters)
 
     search_params = {"metric_type": "COSINE", "params": {"ef": 128}}
+
+    output_fields = [
+        "task_id", "field_name", "survey_stage", "crop_type", "growth_stage",
+        "mission_id", "plot_id", "experiment_id", "site_id", "plot_code",
+        "flight_date", "product_type", "variety", "treatment", "data_source_type",
+        "granularity",
+    ]
 
     results = collection.search(
         data=[query_vector],
@@ -207,20 +308,17 @@ async def search_vectors(
         param=search_params,
         limit=top_k,
         expr=expr,
-        output_fields=["task_id", "field_name", "survey_stage"],
+        output_fields=output_fields,
     )
 
     # 解析结果
     items = []
     for hits in results:
         for hit in hits:
-            items.append({
-                "id": hit.id,
-                "score": hit.score,
-                "task_id": hit.entity.get("task_id", ""),
-                "field_name": hit.entity.get("field_name", ""),
-                "survey_stage": hit.entity.get("survey_stage", ""),
-            })
+            item = {"id": hit.id, "score": hit.score}
+            for f in output_fields:
+                item[f] = hit.entity.get(f, "")
+            items.append(item)
 
     logger.debug(f"Milvus 搜索完成: query_dim={len(query_vector)} results={len(items)}")
     return items

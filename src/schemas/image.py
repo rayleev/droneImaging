@@ -30,13 +30,80 @@ class ImageSearchFilters(BaseModel):
     survey_stage: Optional[str] = None
     crop_type: Optional[str] = Field(None, description="作物类型 ISO 代码，如 ZM=玉米")
     growth_stage: Optional[str] = Field(None, description="生长阶段 BBCH 代码或中文")
+    # agri_research 关联键
+    mission_id: Optional[str] = None
+    plot_id: Optional[str] = None
+    experiment_id: Optional[str] = None
+    site_id: Optional[str] = None
+    plot_code: Optional[str] = None
+    # 分面过滤
+    flight_date: Optional[str] = Field(None, description="飞行日期 YYYY-MM-DD（等值）")
+    flight_date_from: Optional[str] = Field(None, description="飞行日期下界 YYYY-MM-DD（含）")
+    flight_date_to: Optional[str] = Field(None, description="飞行日期上界 YYYY-MM-DD（含）")
+    product_type: Optional[str] = Field(None, description="rgb / ms")
+    variety: Optional[str] = None
+    treatment: Optional[str] = None
+    data_source_type: Optional[str] = Field(None, description="remote_sensing / model_prediction / manual")
+
+
+class TraitFilter(BaseModel):
+    """性状观测值过滤条件（两阶段性状检索用）"""
+    trait_code: str = Field(..., description="性状代码，如 ROLLING_LEAF_SCORE")
+    op: str = Field("gte", description="比较运算: gt / gte / lt / lte / eq")
+    value: float = Field(..., description="比较值")
 
 
 class ImageSearchRequest(BaseModel):
     """语义检索请求"""
-    query: str = Field(..., description="自然语言查询")
+    query: str = Field("", description="自然语言查询（已结构化分解的文本维度）")
+    nl_query: Optional[str] = Field(
+        None,
+        description="原始自然语言查询；提供时服务端会用 LLM 分解为 query+filters+trait_filters，"
+                    "若同时提供 query/filters 则跳过 LLM 分解",
+    )
     limit: int = Field(10, ge=1, le=50, description="返回数量上限")
     filters: Optional[ImageSearchFilters] = Field(None, description="结构化过滤条件")
+    trait_filters: Optional[List[TraitFilter]] = Field(
+        None, description="性状观测值过滤（两阶段：先查 agri_research.observations 得 plot_id 再过滤）"
+    )
+    group_by: Optional[str] = Field(
+        None, description="结果聚合: mission(按飞行任务) / plot(按小区，默认) / none(平铺)"
+    )
+
+
+class ImageSearchResultItem(BaseModel):
+    """语义检索结果项"""
+    id: uuid.UUID
+    task_id: str
+    field_name: Optional[str] = None
+    survey_stage: Optional[str] = None
+    crop_type: Optional[str] = None
+    growth_stage: Optional[str] = None
+    survey_time: Optional[datetime] = None
+    bbox: Optional[list] = None
+    center: Optional[list] = None
+    thumbnail_url: Optional[str] = None
+    tile_url: Optional[str] = None
+    vlm_description: Optional[str] = None
+    score: float
+    # agri_research 富化字段
+    mission_id: Optional[str] = None
+    plot_id: Optional[str] = None
+    experiment_id: Optional[str] = None
+    site_id: Optional[str] = None
+    plot_code: Optional[str] = None
+    flight_date: Optional[str] = None
+    product_type: Optional[str] = None
+    variety: Optional[str] = None
+    treatment: Optional[str] = None
+    plot_geom: Optional[dict] = Field(None, description="小区边界 GeoJSON Polygon（来自 plots.geom）")
+
+
+class ImageSearchResponse(BaseModel):
+    """语义检索响应"""
+    results: List[ImageSearchResultItem]
+    total: int
+    decomposed: bool = Field(True, description="是否成功进行了 LLM 查询分解；false 表示降级为纯向量召回")
 
 
 # ── 响应模型 ─────────────────────────────────────────────────
@@ -98,31 +165,20 @@ class ImageDetail(ImageListItem):
     extra_metadata: Optional[dict] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # agri_research 富化字段
+    image_product_id: Optional[str] = None
+    mission_id: Optional[str] = None
+    plot_id: Optional[str] = None
+    experiment_id: Optional[str] = None
+    site_id: Optional[str] = None
+    plot_code: Optional[str] = None
+    flight_date: Optional[str] = None
+    product_type: Optional[str] = None
+    variety: Optional[str] = None
+    treatment: Optional[str] = None
+    capture_date: Optional[str] = None
 
     model_config = {"from_attributes": True}
-
-
-class ImageSearchResultItem(BaseModel):
-    """语义检索结果项"""
-    id: uuid.UUID
-    task_id: str
-    field_name: Optional[str] = None
-    survey_stage: Optional[str] = None
-    crop_type: Optional[str] = None
-    growth_stage: Optional[str] = None
-    survey_time: Optional[datetime] = None
-    bbox: Optional[list] = None
-    center: Optional[list] = None
-    thumbnail_url: Optional[str] = None
-    tile_url: Optional[str] = None
-    vlm_description: Optional[str] = None
-    score: float
-
-
-class ImageSearchResponse(BaseModel):
-    """语义检索响应"""
-    results: List[ImageSearchResultItem]
-    total: int
 
 
 class ImageListResponse(BaseModel):
@@ -186,3 +242,41 @@ class CompleteResponse(BaseModel):
     region: dict = Field(..., description="实际使用的区域")
     example_size_m: dict = Field(..., description="示例区域尺寸（米）")
     plots: List[PlotCell]
+
+
+# ── agri_research 同步 ──────────────────────────────────────
+
+class ImageSyncRequest(BaseModel):
+    """从 agri_research 同步影像请求"""
+    mission_id: Optional[uuid.UUID] = Field(None, description="限定单次飞行任务")
+    experiment_id: Optional[uuid.UUID] = Field(None, description="限定试验（下所有 mission）")
+    product_type: Optional[str] = Field(None, description="按产品类型过滤: rgb / ms")
+    force: bool = Field(False, description="已存在的也强制重跑 VLM + embedding")
+
+
+class ImageSyncResponse(BaseModel):
+    """同步触发响应"""
+    accepted: bool
+    total: int = Field(..., description="本次待处理影像数")
+    message: str
+
+
+class ImageSyncStatusResponse(BaseModel):
+    """同步进度响应"""
+    running: bool
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    total: int = 0
+    processed: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    skipped: int = 0
+    last_error: Optional[str] = None
+    last_image_product_id: Optional[str] = None
+
+
+class RefreshMetadataResponse(BaseModel):
+    """元数据回填响应"""
+    id: uuid.UUID
+    refreshed_at: datetime
+    message: str

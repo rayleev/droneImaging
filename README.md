@@ -4,27 +4,28 @@
 
 ## 功能特性
 
-- **影像入库**：上传 GeoTIFF → 自动解析元数据 → COG 转换 → 缩略图生成 → VLM 语义描述 → 向量化 → Milvus 索引（全异步 Pipeline）
-- **影像管理**：列表查询（搜索 + 多字段过滤 + 分页）、详情、新增、编辑、软删除、状态查询、缩略图
-- **语义检索**：自然语言查询 → 文本 embedding → Milvus 向量搜索 → 返回带地理位置和瓦片地址的影像列表
+- **自动同步入库（主路径）**：从外部 `agri_research` 只读库拉取小区级裁剪片（`image_products`），经通用数据源层（SCP/MinIO/NAS/HTTP）取源文件、归一化为 GeoTIFF，再全异步 Pipeline 入库
+- **影像管理**：列表查询（搜索 + 多字段过滤 + 分页）、详情、新增、编辑、软删除、状态查询、缩略图；`refresh-metadata` 轻量回填元数据并重建向量
+- **语义检索**：自然语言查询 → LLM 分解为语义 + 结构化过滤 + 性状过滤（两阶段反查 plot_id）→ Milvus 向量搜索 → 返回带地理位置和瓦片地址的影像列表
 - **地图瓦片**：基于 COG 的 XYZ 动态瓦片服务（256×256 PNG），支持前端流畅浏览 700-800MB 大图，越界瓦片自动透明
 - **试验小区划分**：按行列数或小区尺寸（米）做网格划分，支持旋转、A1/线性编号方案
-- **试验小区智能补全**：用户绘制一个示例区域 + 自然语言描述 → 自动补全所有小区，内置 5 种可切换策略
-- **外部拉取**（P1 预留）：从外部 MinIO/NAS 按元数据拉取影像
+- **试验小区智能补全**：用户绘制一个示例区域 + 自然语言描述 → 自动补全所有小区（单一 `vlm_sam` 策略）
+- **手动上传**（deprecated）：保留 `POST /api/images/upload` 供临时补传
 
 ## 技术栈
 
 | 层次 | 选型 |
 |------|------|
 | 后端框架 | FastAPI + Uvicorn（异步，端口 8002） |
-| GeoTIFF 处理 | rasterio + GDAL（元数据解析、COG 转换、瓦片渲染） |
+| GeoTIFF 处理 | rasterio + GDAL（元数据解析、COG 转换、瓦片渲染、世界文件归一化） |
 | 对象存储 | MinIO（原始 TIFF + COG + 缩略图） |
-| 关系数据库 | PostgreSQL + SQLAlchemy（async） |
+| 关系数据库 | PostgreSQL + SQLAlchemy（async）—— 本服务 `drone_imaging` + 外部只读 `agri_research` |
 | 向量数据库 | Milvus（pymilvus） |
 | Embedding | BGE-M3（可配置） |
 | VLM | Qwen-VL / GLM-4V（可配置切换） |
-| LLM | glm-52 等（用于小区补全的描述解析） |
+| LLM | glm-52 等（查询分解 + 小区补全） |
 | SAM | 远程分割服务（可选，端口 8003） |
+| 数据源拉取 | paramiko（SCP）/ minio / NAS / httpx（HTTP） |
 | 配置管理 | config.yaml（Pydantic Settings） |
 
 ## 快速启动
@@ -92,14 +93,16 @@ docker compose up -d
 |--------|--------|
 | `server` | 服务 host/port/workers、上传大小上限 |
 | `minio` | MinIO 连接 + 三个桶名（raw / cog / thumb） |
-| `postgresql` | 数据库连接 URL |
+| `postgresql` | 本服务数据库连接 URL |
+| `research_db` | 外部 `agri_research` 只读库（enabled/url/pool_size/connect_timeout），驱动 sync 流程 |
+| `fetch_source_enabled` / `fetch_source_name` | 是否启用数据源拉取 + 使用的 `pa_di_fetch_source` 数据源名称 |
 | `milvus` | Milvus 连接 + collection 名 + 向量维度 + 启动时是否重建 |
 | `embedding` | Embedding API 地址、模型、密钥、批量大小 |
 | `vlm` | VLM 提供者、API 地址、模型、提示词路径、图片尺寸、超时、重试 |
-| `llm` | LLM 提供者、API 地址、模型、超时、重试（用于小区补全） |
+| `llm` | LLM 提供者、API 地址、模型、超时、重试（查询分解 + 小区补全） |
 | `tianditu` | 天地图 key |
 | `processing` | COG 块大小、overview 层级、缩略图尺寸、后台并发数 |
-| `completion` | 试验小区智能补全：策略选择、SAM 服务地址、可分别覆盖的 llm/vlm 子配置 |
+| `completion` | 试验小区智能补全：策略（当前固定 vlm_sam）、SAM 服务地址、可分别覆盖的 llm/vlm 子配置 |
 
 **completion 配置 fallback 逻辑**：`completion.llm` / `completion.vlm` 子节为 `null` 时自动复用顶层 `llm` / `vlm`，避免重复配置。所有连接字段均可通过环境变量覆盖（如 `VLM_API_KEY`、`LLM_API_URL`、`MINIO_ENDPOINT` 等）。
 
@@ -113,15 +116,18 @@ docker compose up -d
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/images/upload` | 上传 GeoTIFF（multipart），返回 201 + 后台处理 |
+| POST | `/api/images/upload` | 上传 GeoTIFF（multipart，deprecated，供临时补传） |
+| POST | `/api/images/sync` | 从 agri_research 同步影像（可选 mission/experiment/force），后台执行返回 202 |
+| GET | `/api/images/sync/status` | 查询最近一次同步进度 |
 | GET | `/api/images` | 影像列表（搜索 + 多字段过滤 + 分页） |
 | POST | `/api/images` | 新增影像记录（不触发 Pipeline） |
 | GET | `/api/images/{id}` | 影像完整详情 |
 | PUT | `/api/images/{id}` | 编辑影像记录 |
 | DELETE | `/api/images/{id}` | 软删除影像 |
+| PATCH | `/api/images/{id}/refresh-metadata` | 轻量回填元数据 + 重建向量（不重跑 VLM） |
 | GET | `/api/images/{id}/status` | 处理状态查询 |
 | GET | `/api/images/{id}/thumbnail` | 缩略图（JPEG） |
-| POST | `/api/images/search` | 语义检索（自然语言 → 向量 → Milvus） |
+| POST | `/api/images/search` | 语义检索（自然语言 → LLM 分解 + 性状两阶段过滤 → Milvus） |
 
 ### 瓦片服务
 
@@ -145,32 +151,36 @@ docker compose up -d
 
 ## 入库流程（异步 Pipeline）
 
+**主路径 = 从 agri_research 同步**（`POST /api/images/sync`）：
+
 ```
-上传 GeoTIFF
-  → [1] 存储原始文件 → MinIO (drone-raw)
-  → [2] rasterio 解析元数据 → PostgreSQL
-  → [3] COG 转换 → MinIO (drone-cog)
-  → [4] 生成缩略图 → MinIO (drone-thumb)
-  → [5] VLM 描述（结构化 JSON：作物/生长期/冠层/异常/管理痕迹/影像质量/拍摄角度）
-  → [6] Embedding → Milvus
+从 agri_research 拉候选（image_products × flight_missions，processed=true）
+  → [0] 通用数据源层拉取源文件（SCP/MinIO/NAS/HTTP，按 pa_di_fetch_source 配置）
+  → [1] geo_convert 归一化为 GeoTIFF（PNG+pgw / TIFF+tfw → EPSG:4326）
+  → [2] 富化（plot/experiment/site + 拍摄时性状观测快照）→ 写 pa_di_image
+  → [3] 存储原始文件 → MinIO (drone-raw)
+  → [4] COG 转换 → MinIO (drone-cog)
+  → [5] 生成缩略图 → MinIO (drone-thumb)
+  → [6] VLM 描述（结构化 JSON：作物/生长期/冠层/异常/管理痕迹/影像质量/拍摄角度）
+  → [7] Embedding → Milvus
   → status = ready
 ```
 
-任一步骤失败标记 `status=error` 并记录 `error_message`，不影响其他影像处理。Pipeline 并发数由 `processing.max_concurrent_tasks` 控制，CPU 密集步骤（COG/缩略图）丢到线程池执行。
+> 旧的手动上传路径（`POST /api/images/upload`）流程一致，但没有拉取/归一化/富化步骤，已标 deprecated。
+
+任一步骤失败标记 `status=error` 并记录 `error_message`，不影响其他影像处理。Pipeline 并发数由 `processing.max_concurrent_tasks` 控制，CPU 密集步骤（COG/缩略图/归一化）丢到线程池执行。
 
 ## 试验小区智能补全策略
 
-通过 `config.yaml` 的 `completion.strategy` 切换，5 种策略共享同一抽象基类，按需选用：
+当前**唯一策略 `vlm_sam`**（`completion.strategy` 仅作日志参考，代码固定返回 `VLMSamStrategy`）：
 
-| 策略值 | 思路 | 适用场景 |
-|--------|------|----------|
-| `vlm_direct` | VLM 分块识别关键点（田角 / 分隔线）→ 代码计算网格 | 默认推荐，大田块关键点识别 |
-| `vlm` | VLM 端到端输出 field_bbox + 行列数 | 形状规整、VLM 直接给出布局 |
-| `sam_llm` | SAM 远程分割检测边界 + LLM 解析描述 | 有 SAM 服务、需要真实边界裁剪 |
-| `sam_vlm` | SAM 实例分割 + VLM 描述混合 | 复杂田块、需多模态融合 |
-| `sam_template` | SAM 实例分割 + 用户画框模板匹配 | 用户画框可作为模板复用 |
+| 步骤 | 说明 |
+|------|------|
+| 1 | SAM 精确分割用户绘制的示例小区 → 提取单个小区的精确地理尺寸 |
+| 2 | VLM 一次性识别整块田大边界 `field_boundary` + 异常区域 `anomalies` + 旋转角度 |
+| 3 | 在 VLM 大边界（或影像 bbox 兜底）内 SAM 批量分割，按 Step1 尺寸筛选，直接用 SAM mask 作为小区边界；失败则回退代码网格复制 |
 
-> 未配置 SAM 远程服务时，`sam_*` 系列策略会 fallback 到 OpenCV 边界检测或网格生成。
+> VLM 返回的 `field_boundary` 需过 5 项校验（归一化坐标、整数像素、越界、面积占比 20-99%、长宽比 ≤20），不通过则兜底。未配置 SAM 远程服务时，边界检测 fallback 到本地 SAM / OpenCV Canny / 影像 bbox。原 5 种策略（`vlm_direct`/`vlm`/`sam_llm`/`sam_vlm`/`sam_template`）已被 vlm_sam 取代。
 
 ## 项目结构
 
@@ -178,18 +188,23 @@ docker compose up -d
 droneImaging/
 ├── src/
 │   ├── main.py                      # FastAPI 应用入口、生命周期
-│   ├── config.py                    # 配置加载（config.yaml → Pydantic）
-│   ├── database.py                  # PostgreSQL 连接（SQLAlchemy async）
+│   ├── config.py                    # 配置加载（config.yaml → Pydantic + env 覆盖）
+│   ├── database.py                  # 本服务 + agri_research 只读连接池（SQLAlchemy async）
 │   ├── models/                      # ORM 模型（Image, FetchSource）
 │   ├── schemas/image.py             # Pydantic 请求/响应模型
 │   ├── routers/
-│   │   ├── images.py                # 影像 CRUD + 上传 + 状态 + 缩略图
-│   │   ├── search.py                # 语义检索
+│   │   ├── images.py                # 影像 CRUD + 上传(deprecated) + 状态 + 缩略图
+│   │   ├── sync.py                  # agri_research 同步 + 进度 + refresh-metadata
+│   │   ├── search.py                # 语义检索（LLM 分解 + 性状两阶段过滤）
 │   │   ├── tiles.py                 # XYZ 瓦片
 │   │   ├── plots.py                 # 试验小区规则划分
-│   │   └── complete.py              # 试验小区智能补全
+│   │   └── complete.py              # 试验小区智能补全（vlm_sam）
 │   ├── services/
-│   │   ├── pipeline.py              # 入库 Pipeline 编排
+│   │   ├── pipeline.py              # 入库 Pipeline 编排（upload + sync 双路径）
+│   │   ├── research_sync.py         # agri_research 元数据拉取与富化
+│   │   ├── fetch_source.py          # 通用数据源拉取（SCP/MinIO/NAS/HTTP）
+│   │   ├── geo_convert.py           # 世界文件 → GeoTIFF 归一化
+│   │   ├── query_decompose.py       # 自然语言查询分解（LLM）
 │   │   ├── geotiff.py               # GeoTIFF 元数据解析
 │   │   ├── cog.py                   # COG 转换
 │   │   ├── storage.py               # MinIO 客户端
@@ -197,31 +212,23 @@ droneImaging/
 │   │   ├── embedding.py             # 文本向量化
 │   │   ├── milvus_client.py         # Milvus collection 管理
 │   │   ├── plot_divider.py          # 规则网格划分
-│   │   └── plot_completion/         # 智能补全策略
+│   │   └── plot_completion/         # 智能补全
 │   │       ├── base.py              # 策略抽象基类
 │   │       ├── config.py            # 补全配置加载
 │   │       ├── boundary_detector.py # 边界检测（SAM 远程 / OpenCV）
-│   │       ├── llm_parser.py        # LLM 解析自然语言描述
-│   │       ├── vlm_direct_strategy.py
-│   │       ├── vlm_strategy.py
-│   │       ├── sam_llm_strategy.py
-│   │       ├── sam_vlm_strategy.py
-│   │       └── sam_template_strategy.py
+│   │       ├── llm_parser.py        # LLM 解析自然语言描述（保留未用）
+│   │       └── vlm_sam_strategy.py  # 唯一策略 vlm_sam
 │   └── utils/thumbnail.py           # 缩略图生成
-├── prompts/                         # 各策略提示词
+├── prompts/                         # 提示词
 │   ├── vlm_describe.txt             # 入库 VLM 描述（结构化 JSON）
-│   ├── vlm_keypoints.txt            # vlm_direct 策略关键点识别
-│   ├── vlm_plot_completion.txt      # vlm 策略端到端划分
-│   ├── vlm_direct_plots.txt         # vlm_direct 策略辅助
-│   ├── vlm_understand_drawing.txt   # 理解用户绘图
-│   └── llm_plot_completion.txt      # LLM 解析描述
+│   └── vlm_sam_field_boundary.txt   # vlm_sam 大边界 + 异常 + 旋转识别
 ├── config.yaml                      # 配置文件（git 忽略，含密钥）
 ├── config.yaml.example              # 配置模板
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── woodpecker.yml                   # CI 配置
-├── AGENTS.md / CLAUDE.md            # AI 编码助手指引
+├── .woodpecker.yml                  # CI 配置（Woodpecker，带点前缀）
+├── AGENTS.md / PROJECT_MEMORY.md    # AI 编码助手指引 / 项目记忆
 └── README.md
 ```
 
@@ -231,6 +238,8 @@ droneImaging/
 - **状态机驱动**：`Image.status` 是 Pipeline 进度的唯一真相源，对外通过 status 端点暴露
 - **URL 即时合成**：tile/thumbnail URL 在响应时由 `get_public_base_url()` 合成，不入库
 - **越界瓦片透明**：瓦片地理范围与影像求交集，只渲染交集到 256×256 画布对应位置，其余透明，影像随缩放正确变化
-- **策略可插拔**：智能补全 5 种策略共享抽象基类，配置切换，便于扩展新策略
+- **主路径 sync**：入库以从 `agri_research` 同步为主，通用数据源层 + `geo_convert` 归一化 + 元数据富化，手动 upload 保留为 deprecated
+- **单一补全策略**：智能补全固定 `vlm_sam`（SAM 精确分割示例小区 → VLM 识别大边界 → SAM 批量/网格复制）
 - **VLM 结构化输出**：入库 VLM 描述输出纯 JSON（作物/生长期/冠层覆盖度/异常/管理痕迹/影像质量/拍摄角度），summary 用于 embedding，其余存 `extra_metadata` JSONB
-- **P1 预留**：`FetchSource` 模型与 fetch 流程为预留；Milvus 中 `image_vector` 字段预留（当前 zero-filled）
+- **两阶段性状过滤**：语义检索可先按性状观测值反查 `plot_id` 集合，再对 Milvus 做 `plot_id in [...]` 过滤
+- **P1 预留**：`FetchSource` 数据源层已实现并用于 sync（配置在 `pa_di_fetch_source` 表，无独立 router）；Milvus 中 `image_vector` 字段预留（当前 zero-filled）

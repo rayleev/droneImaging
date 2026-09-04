@@ -42,6 +42,22 @@ class PostgresqlConfig(BaseModel):
     url: str = "postgresql+asyncpg://postgres:password@localhost:5432/drone_imaging"
 
 
+class ResearchDbConfig(BaseModel):
+    """外部 agri_research 数据库（只读）配置。
+
+    用于从 flight_missions / plots / observations 等表拉取元数据，
+    富化本服务 Image 记录的 embedding 与标量过滤字段。
+    生产部署应使用只读账号（如 agri_readonly）。
+    """
+    enabled: bool = Field(True, description="是否启用从 agri_research 同步元数据")
+    url: str = Field(
+        "postgresql+asyncpg://agri_readonly:123456@10.33.105.152:5432/agri_research",
+        description="agri_research 只读连接串",
+    )
+    pool_size: int = Field(5, description="连接池大小")
+    connect_timeout: float = Field(10.0, description="连接超时（秒）")
+
+
 class MilvusConfig(BaseModel):
     host: str = "localhost"
     port: int = 19530
@@ -151,6 +167,7 @@ class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     minio: MinioConfig = MinioConfig()
     postgresql: PostgresqlConfig = PostgresqlConfig()
+    research_db: ResearchDbConfig = ResearchDbConfig()
     milvus: MilvusConfig = MilvusConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     vlm: VlmConfig = VlmConfig()
@@ -158,6 +175,14 @@ class AppConfig(BaseModel):
     tianditu: TiandituConfig = TiandituConfig()
     processing: ProcessingConfig = ProcessingConfig()
     completion: CompletionConfig = CompletionConfig()
+    # 数据源拉取（pa_di_fetch_source 表配置）
+    fetch_source_enabled: bool = Field(
+        True, description="是否启用从 pa_di_fetch_source 表拉取源文件"
+    )
+    fetch_source_name: str = Field(
+        "agri_research_152_scp",
+        description="pa_di_fetch_source 表中的数据源名称",
+    )
 
 
 # ── 全局单例 ─────────────────────────────────────────────────
@@ -208,6 +233,26 @@ def _apply_env_overrides(cfg: AppConfig) -> None:
     db_url = os.environ.get("DB_URL")
     if db_url:
         cfg.postgresql = cfg.postgresql.model_validate({"url": db_url})
+
+    # 外部 agri_research 数据库（只读）
+    research_db_url = os.environ.get("RESEARCH_DB_URL")
+    if research_db_url:
+        cfg.research_db = cfg.research_db.model_validate(
+            {**cfg.research_db.model_dump(), "url": research_db_url}
+        )
+    research_db_enabled = os.environ.get("RESEARCH_DB_ENABLED")
+    if research_db_enabled is not None:
+        cfg.research_db = cfg.research_db.model_validate(
+            {**cfg.research_db.model_dump(), "enabled": research_db_enabled.lower() in ("1", "true", "yes")}
+        )
+
+    # 数据源拉取
+    fetch_source_enabled = os.environ.get("FETCH_SOURCE_ENABLED")
+    if fetch_source_enabled is not None:
+        cfg.fetch_source_enabled = fetch_source_enabled.lower() in ("1", "true", "yes")
+    fetch_source_name = os.environ.get("FETCH_SOURCE_NAME")
+    if fetch_source_name:
+        cfg.fetch_source_name = fetch_source_name
 
     # MinIO
     minio_override = _env_dict({

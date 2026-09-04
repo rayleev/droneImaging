@@ -21,10 +21,17 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     logger.info(f"droneImaging 服务启动 | port={cfg.server.port} debug={cfg.server.debug}")
 
-    # 初始化数据库（自动建表）
+    # 初始化数据库（自动建表 + agri_research 只读连接池）
     from src.database import init_db
     await init_db()
     logger.info("PostgreSQL 数据库初始化完成")
+
+    # 提示 research_db 状态
+    from src.config import get_config as _gc
+    if _gc().research_db.enabled:
+        logger.info("agri_research 只读连接池已启用（sync 功能可用）")
+    else:
+        logger.warning("agri_research 只读连接池未启用（research_db.enabled=false，sync 功能不可用）")
 
     # 初始化 MinIO（检查/创建桶）
     from src.services.storage import init_storage
@@ -75,15 +82,19 @@ def create_app() -> FastAPI:
     # ── 注册路由 ──
     from src.routers.images import router as images_router
     from src.routers.search import router as search_router
+    from src.routers.sync import router as sync_router
     from src.routers.tiles import router as tiles_router
     from src.routers.plots import router as plots_router
     from src.routers.complete import router as complete_router
+    from src.routers.research import router as research_router
 
+    app.include_router(sync_router, prefix="/api/images", tags=["agri_research 同步"])
     app.include_router(images_router, prefix="/api/images", tags=["影像管理"])
     app.include_router(search_router, prefix="/api/images", tags=["语义检索"])
     app.include_router(tiles_router, prefix="/api/tiles", tags=["瓦片服务"])
     app.include_router(plots_router, prefix="/api/plots", tags=["试验小区"])
     app.include_router(complete_router, prefix="/api/plots", tags=["智能补全"])
+    app.include_router(research_router, prefix="/api/research", tags=["试验地点与试验"])
 
     # 健康检查（/api/health 供前端经 /api/drone 代理访问）
     @app.get("/health", tags=["系统"])

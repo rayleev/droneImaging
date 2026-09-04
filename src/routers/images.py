@@ -29,7 +29,7 @@ from src.schemas.image import (
 router = APIRouter()
 
 
-@router.post("/upload", response_model=ImageUploadResponse, status_code=201)
+@router.post("/upload", response_model=ImageUploadResponse, status_code=201, deprecated=True)
 async def upload_image(
     file: UploadFile = File(..., description="GeoTIFF 文件"),
     task_id: str = Form(..., description="任务编号"),
@@ -42,7 +42,11 @@ async def upload_image(
     survey_time: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
 ):
-    """上传无人机 GeoTIFF 影像"""
+    """[已废弃] 上传无人机 GeoTIFF 影像
+
+    数据源已切换为从 agri_research.flight_missions 同步小区裁剪片，
+    请改用 POST /api/images/sync。此接口保留仅供临时补传/调试。
+    """
     if not file.filename or not file.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="仅支持 GeoTIFF 文件（.tif/.tiff）")
 
@@ -104,10 +108,10 @@ async def upload_image(
 
 async def _run_pipeline(image_id: uuid.UUID, file_path: str):
     """后台执行入库 Pipeline（独立 session）"""
-    from src.database import async_session_factory
+    import src.database as _db
     from src.services.pipeline import process_image
 
-    async with async_session_factory() as session:
+    async with _db.async_session_factory() as session:
         await process_image(session, image_id, file_path)
 
 
