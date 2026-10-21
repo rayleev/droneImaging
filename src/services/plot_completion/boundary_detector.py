@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -153,6 +152,7 @@ def _refine_mask_to_rectangle(polygon: list) -> list:
     """
     if not polygon or len(polygon) < 3:
         return polygon
+    import cv2
     pts = np.array(polygon, dtype=np.float32).reshape(-1, 1, 2)
     rect = cv2.minAreaRect(pts)  # ((cx, cy), (w, h), angle)
     box = cv2.boxPoints(rect)
@@ -353,6 +353,7 @@ async def _detect_with_sam(cog_path, sam_model, nodata, focus_bbox: Optional[lis
     sam_model.set_image(img)
     masks, scores, logits = sam_model.predict(point_coords=None, point_labels=None, multimask_output=True)
     combined = np.any(masks, axis=0).astype(np.uint8) * 255
+    import cv2
     contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         largest = max(contours, key=cv2.contourArea)
@@ -383,6 +384,7 @@ async def _detect_with_sam(cog_path, sam_model, nodata, focus_bbox: Optional[lis
 async def _detect_with_opencv(cog_path, image_bbox, nodata, focus_bbox: Optional[list] = None) -> dict:
     data, bounds = _load_cog_with_focus(cog_path, focus_bbox, max_size=1024)
     img = np.transpose(data, (1, 2, 0)).astype(np.uint8)
+    import cv2
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     edges = cv2.Canny(gray, 50, 150)
     kernel = np.ones((3, 3), np.uint8)

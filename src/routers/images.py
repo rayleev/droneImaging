@@ -462,17 +462,16 @@ async def get_original_png(
     from src.services.storage import download_file
 
     cfg = get_config()
-    loop = asyncio.get_event_loop()
     tmp_dir = Path(tempfile.mkdtemp(prefix="preview_"))
     try:
-        local_path = await loop.run_in_executor(
+        local_path = await asyncio.get_running_loop().run_in_executor(
             None,
             download_file,
             cfg.minio.buckets.raw,
             image.original_path,
             str(tmp_dir / image.original_filename),
         )
-        data = await loop.run_in_executor(
+        data = await asyncio.get_running_loop().run_in_executor(
             None, render_preview_png, str(local_path), f"img_{image.id}"
         )
         return Response(content=data, media_type="image/png")
