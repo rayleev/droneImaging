@@ -23,6 +23,9 @@ Pillow>=10.3.0
 # HTTP 客户端（VLM API 调用）
 httpx>=0.27.0
 
+# SCP 文件拉取（agri_research 数据源）
+paramiko>=3.4.0
+
 # 配置与工具
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
