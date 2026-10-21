@@ -80,6 +80,7 @@ processing:
   cog_overview_levels: [2, 4, 8, 16]  # overview 金字塔层级
   thumbnail_size: 512                 # 缩略图长边（像素）
   max_concurrent_tasks: 3             # 后台处理最大并发数
+  skip_vlm_embedding: false           # true = 跳过 VLM 描述 / Embedding / Milvus（VLM Key 不可用时置 true）
 
 # 试验小区智能补全
 completion:

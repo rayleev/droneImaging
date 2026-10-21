@@ -199,21 +199,12 @@ async def _run_sync(candidates: list[dict], force: bool) -> None:
         _finish_sync_status(last_error=str(e)[:500])
         return
 
-    # 阶段 2：并行执行 VLM/Embedding 和 Mosaic 拼接
-    logger.info("入库完成，开始并行执行 VLM/Embedding 和 Mosaic 拼接...")
-
-    async def _run_vlm_finalize() -> None:
-        """为跳过的影像补充 VLM/Embedding。"""
-        try:
-            from src.services.pipeline_vlm import finalize_pending_vlm_embeddings
-            async with _db.async_session_factory() as vlm_session:
-                count = await finalize_pending_vlm_embeddings(vlm_session)
-                logger.info(f"VLM/Embedding 完成 {count} 张影像")
-        except Exception as e:
-            logger.exception(f"VLM/Embedding 失败: {e}")
+    # 阶段 2：Mosaic 拼接（VLM/Embedding 由 processing.skip_vlm_embedding 控制，
+    # 禁用时只拼接、不生成描述与向量）
+    logger.info("入库完成，开始 Mosaic 拼接...")
 
     async def _run_mosaic() -> None:
-        """创建拼接影像（含 VLM/Embedding）。"""
+        """创建拼接影像（VLM/Embedding 按配置决定是否执行）。"""
         try:
             from src.services.mosaic import create_mosaics_for_session
             async with _db.async_session_factory() as mosaic_session:
@@ -223,12 +214,9 @@ async def _run_sync(candidates: list[dict], force: bool) -> None:
             logger.exception(f"创建拼接影像失败: {e}")
 
     try:
-        await asyncio.gather(
-            _run_vlm_finalize(),
-            _run_mosaic(),
-        )
+        await _run_mosaic()
     except Exception as e:
-        logger.exception(f"并行任务异常: {e}")
+        logger.exception(f"Mosaic 拼接异常: {e}")
 
     _finish_sync_status()
     logger.info(

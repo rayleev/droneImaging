@@ -5,8 +5,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import shutil
+import tempfile
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -413,3 +417,64 @@ async def get_thumbnail(
     except Exception as e:
         logger.error(f"读取缩略图失败: {image_id} | {e}")
         raise HTTPException(status_code=500, detail="读取缩略图失败")
+
+
+@router.get("/{image_id}/original")
+async def get_original_image(
+    image_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """下载原始 GeoTIFF（服务端流式代理）。
+
+    供外部系统（如 field-shape-web）拉取原始影像使用。
+    """
+    image = await session.get(Image, image_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="影像不存在")
+    if not image.original_path:
+        raise HTTPException(status_code=404, detail="该影像没有原始文件（original_path 为空）")
+
+    from src.services.preview import stream_object
+
+    return stream_object(
+        get_config().minio.buckets.raw,
+        image.original_path,
+        image.original_filename,
+    )
+
+
+@router.get("/{image_id}/original.png")
+async def get_original_png(
+    image_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """原图预览 PNG（最大边长 8192，带磁盘缓存）。
+
+    浏览器无法直接显示 GeoTIFF，前端弹窗通过该端点获取可缩放查看的 PNG。
+    """
+    image = await session.get(Image, image_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="影像不存在")
+    if not image.original_path:
+        raise HTTPException(status_code=404, detail="该影像没有原始文件（original_path 为空）")
+
+    from src.services.preview import render_preview_png
+    from src.services.storage import download_file
+
+    cfg = get_config()
+    loop = asyncio.get_event_loop()
+    tmp_dir = Path(tempfile.mkdtemp(prefix="preview_"))
+    try:
+        local_path = await loop.run_in_executor(
+            None,
+            download_file,
+            cfg.minio.buckets.raw,
+            image.original_path,
+            str(tmp_dir / image.original_filename),
+        )
+        data = await loop.run_in_executor(
+            None, render_preview_png, str(local_path), f"img_{image.id}"
+        )
+        return Response(content=data, media_type="image/png")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

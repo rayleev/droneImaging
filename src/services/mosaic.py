@@ -79,8 +79,9 @@ async def create_mosaics_for_session(session: AsyncSession) -> int:
             )
             if mosaic:
                 created_count += 1
-                # 为拼接影像生成 VLM 描述和 Embedding
-                await process_mosaic_vlm_and_embedding(session, mosaic)
+                # 为拼接影像生成 VLM 描述和 Embedding（可由配置跳过）
+                if not get_config().processing.skip_vlm_embedding:
+                    await process_mosaic_vlm_and_embedding(session, mosaic)
         except Exception as e:
             logger.exception(f"[Mosaic] 小区级拼接失败 plot={plot_id}: {e}")
 
@@ -114,8 +115,9 @@ async def create_mosaics_for_session(session: AsyncSession) -> int:
             )
             if mosaic:
                 created_count += 1
-                # 为拼接影像生成 VLM 描述和 Embedding
-                await process_mosaic_vlm_and_embedding(session, mosaic)
+                # 为拼接影像生成 VLM 描述和 Embedding（可由配置跳过）
+                if not get_config().processing.skip_vlm_embedding:
+                    await process_mosaic_vlm_and_embedding(session, mosaic)
         except Exception as e:
             logger.exception(f"[Mosaic] 飞行任务级拼接失败 mission={mission_id}: {e}")
 

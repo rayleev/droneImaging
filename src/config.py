@@ -105,6 +105,9 @@ class ProcessingConfig(BaseModel):
     cog_overview_levels: List[int] = [2, 4, 8, 16]
     thumbnail_size: int = 512
     max_concurrent_tasks: int = 3
+    # 是否跳过 VLM 描述 / Embedding / Milvus 入库步骤。
+    # VLM API Key 不可用或无需语义检索时置为 true，同步/上传两条路径都会跳过。
+    skip_vlm_embedding: bool = False
 
 
 # ── 顶层配置 ─────────────────────────────────────────────────
@@ -297,6 +300,16 @@ def _apply_env_overrides(cfg: AppConfig) -> None:
     })
     if embedding_override:
         cfg.embedding = cfg.embedding.model_validate({**cfg.embedding.model_dump(), **embedding_override})
+
+    # Processing（是否跳过 VLM / Embedding / Milvus）
+    skip_vlm_embedding = os.environ.get("SKIP_VLM_EMBEDDING")
+    if skip_vlm_embedding is not None:
+        cfg.processing = cfg.processing.model_validate(
+            {
+                **cfg.processing.model_dump(),
+                "skip_vlm_embedding": skip_vlm_embedding.lower() in ("1", "true", "yes"),
+            }
+        )
 
 
 def _env_dict(mapping: dict) -> dict:

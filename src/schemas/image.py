@@ -280,3 +280,40 @@ class RefreshMetadataResponse(BaseModel):
     id: uuid.UUID
     refreshed_at: datetime
     message: str
+
+
+# ── 拼接影像（pa_di_image_mosaic） ────────────────────────────
+
+class MosaicListItem(BaseModel):
+    """拼接影像列表项"""
+    id: uuid.UUID
+    mosaic_type: Optional[str] = None
+    plot_id: Optional[str] = None
+    plot_code: Optional[str] = None
+    mission_id: Optional[str] = None
+    product_type: Optional[str] = None
+    image_count: int = 0
+    bbox: Optional[list] = None
+    crs: Optional[str] = None
+    width_pixels: Optional[int] = None
+    height_pixels: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class MosaicDetail(MosaicListItem):
+    """拼接影像详情"""
+    image_ids: Optional[list] = None
+    vlm_description: Optional[str] = None
+    vlm_model: Optional[str] = None
+    vlm_time: Optional[datetime] = None
+
+
+class MosaicListResponse(BaseModel):
+    """拼接影像列表响应（分页）"""
+    items: List[MosaicListItem]
+    total: int
+    page: int
+    page_size: int

@@ -101,7 +101,7 @@ docker compose up -d
 | `vlm` | VLM 提供者、API 地址、模型、提示词路径、图片尺寸、超时、重试 |
 | `llm` | LLM 提供者、API 地址、模型、超时、重试（查询分解 + 小区补全） |
 | `tianditu` | 天地图 key |
-| `processing` | COG 块大小、overview 层级、缩略图尺寸、后台并发数 |
+| `processing` | COG 块大小、overview 层级、缩略图尺寸、后台并发数、是否跳过 VLM/Embedding（`skip_vlm_embedding`） |
 | `completion` | 试验小区智能补全：策略（当前固定 vlm_sam）、SAM 服务地址、可分别覆盖的 llm/vlm 子配置 |
 
 **completion 配置 fallback 逻辑**：`completion.llm` / `completion.vlm` 子节为 `null` 时自动复用顶层 `llm` / `vlm`，避免重复配置。所有连接字段均可通过环境变量覆盖（如 `VLM_API_KEY`、`LLM_API_URL`、`MINIO_ENDPOINT` 等）。
@@ -121,13 +121,28 @@ docker compose up -d
 | GET | `/api/images/sync/status` | 查询最近一次同步进度 |
 | GET | `/api/images` | 影像列表（搜索 + 多字段过滤 + 分页） |
 | POST | `/api/images` | 新增影像记录（不触发 Pipeline） |
-| GET | `/api/images/{id}` | 影像完整详情 |
-| PUT | `/api/images/{id}` | 编辑影像记录 |
+| GET  | `/api/images/{id}` | 影像完整详情 |
+| PUT  | `/api/images/{id}` | 编辑影像记录 |
 | DELETE | `/api/images/{id}` | 软删除影像 |
+| GET  | `/api/images/{id}/original` | 下载原始 GeoTIFF（服务端流式代理，供 field-shape-web 等外部系统拉取） |
+| GET  | `/api/images/{id}/original.png` | 原图预览 PNG（最大边长 8192，带缓存） |
 | PATCH | `/api/images/{id}/refresh-metadata` | 轻量回填元数据 + 重建向量（不重跑 VLM） |
-| GET | `/api/images/{id}/status` | 处理状态查询 |
-| GET | `/api/images/{id}/thumbnail` | 缩略图（JPEG） |
+| GET  | `/api/images/{id}/status` | 处理状态查询 |
+| GET  | `/api/images/{id}/thumbnail` | 缩略图（JPEG） |
 | POST | `/api/images/search` | 语义检索（自然语言 → LLM 分解 + 性状两阶段过滤 → Milvus） |
+
+### 拼接影像（mosaic）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/api/mosaics` | 拼接影像列表（可按 `mosaic_type` / `mission_id` / `plot_id` / `product_type` 过滤 + 分页） |
+| GET  | `/api/mosaics/{id}` | 拼接影像详情 |
+| GET  | `/api/mosaics/{id}/thumbnail` | 拼接影像缩略图（JPEG） |
+| GET  | `/api/mosaics/{id}/original` | 下载拼接影像原始 GeoTIFF（供 field-shape-web 使用） |
+| GET  | `/api/mosaics/{id}/original.png` | 拼接影像原图预览 PNG |
+
+> `mosaic_type='mission'` 为整块试验田影像，可交给 field-shape-web 重新划分小区；
+> `mosaic_type='plot'` 为单小区影像。
 
 ### 瓦片服务
 
@@ -170,6 +185,8 @@ docker compose up -d
 
 任一步骤失败标记 `status=error` 并记录 `error_message`，不影响其他影像处理。Pipeline 并发数由 `processing.max_concurrent_tasks` 控制，CPU 密集步骤（COG/缩略图/归一化）丢到线程池执行。
 
+**跳过 VLM / Embedding**：当 VLM API Key 不可用或无需语义检索时，把 `processing.skip_vlm_embedding` 置为 `true`（或设环境变量 `SKIP_VLM_EMBEDDING=true`），同步/上传两条路径都会跳过 Step 5/6，影像仍会正常完成 COG/缩略图并标记 `ready`；mosaic 拼接也照常执行，只是不再生成描述与向量。
+
 ## 试验小区智能补全策略
 
 当前**唯一策略 `vlm_sam`**（`completion.strategy` 仅作日志参考，代码固定返回 `VLMSamStrategy`）：
@@ -198,7 +215,8 @@ droneImaging/
 │   │   ├── search.py                # 语义检索（LLM 分解 + 性状两阶段过滤）
 │   │   ├── tiles.py                 # XYZ 瓦片
 │   │   ├── plots.py                 # 试验小区规则划分
-│   │   └── complete.py              # 试验小区智能补全（vlm_sam）
+│   │   ├── complete.py              # 试验小区智能补全（vlm_sam）
+│   │   └── mosaics.py               # 拼接影像列表/详情/原图下载/预览
 │   ├── services/
 │   │   ├── pipeline.py              # 入库 Pipeline 编排（upload + sync 双路径）
 │   │   ├── research_sync.py         # agri_research 元数据拉取与富化
@@ -208,6 +226,7 @@ droneImaging/
 │   │   ├── geotiff.py               # GeoTIFF 元数据解析
 │   │   ├── cog.py                   # COG 转换
 │   │   ├── storage.py               # MinIO 客户端
+│   │   ├── preview.py               # 原图流式代理 + PNG 预览渲染
 │   │   ├── vlm.py                   # VLM 描述生成
 │   │   ├── embedding.py             # 文本向量化
 │   │   ├── milvus_client.py         # Milvus collection 管理

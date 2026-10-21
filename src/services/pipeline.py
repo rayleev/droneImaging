@@ -38,6 +38,7 @@ async def process_image(
     session: AsyncSession,
     image_id: uuid.UUID,
     file_path: str,
+    skip_vlm_embedding: bool | None = None,
 ) -> None:
     """执行完整的影像入库 Pipeline。
 
@@ -45,19 +46,24 @@ async def process_image(
         session: 数据库 Session
         image_id: 影像记录 ID
         file_path: 本地临时文件路径
+        skip_vlm_embedding: 是否跳过 VLM 描述 / Embedding / Milvus 步骤；
+            None 时取配置 ``processing.skip_vlm_embedding``
     """
     sem = _get_semaphore()
     async with sem:
-        await _do_process(session, image_id, file_path)
+        await _do_process(session, image_id, file_path, skip_vlm_embedding)
 
 
 async def _do_process(
     session: AsyncSession,
     image_id: uuid.UUID,
     file_path: str,
+    skip_vlm_embedding: bool | None = None,
 ) -> None:
     """Pipeline 实际执行逻辑"""
     cfg = get_config()
+    if skip_vlm_embedding is None:
+        skip_vlm_embedding = cfg.processing.skip_vlm_embedding
     file_path = Path(file_path)
 
     # 加载影像记录
@@ -122,48 +128,51 @@ async def _do_process(
         logger.info(f"[{image_id}] Step 4 完成: 缩略图已生成")
 
         # ── Step 5: VLM 描述 ──
-        await _update_status(session, image, "describing", "VLM 描述生成中")
-        from src.services.vlm import describe_image
+        if not skip_vlm_embedding:
+            await _update_status(session, image, "describing", "VLM 描述生成中")
+            from src.services.vlm import describe_image
 
-        result = await describe_image(thumb_path)
-        # summary 用于 embedding 和展示；完整结构化 JSON 存入 extra_metadata
-        image.vlm_description = result.summary
-        # 合并而非覆盖 extra_metadata，避免抹掉之前写入的数据
-        existing_extra = image.extra_metadata or {}
-        existing_extra.update(result.raw)
-        image.extra_metadata = existing_extra
-        image.vlm_model = cfg.vlm.model
-        image.vlm_time = datetime.now()
-        await session.commit()
-        logger.info(f"[{image_id}] Step 5 完成: VLM 描述已生成 (parsed_ok={result.parsed_ok})")
+            result = await describe_image(thumb_path)
+            # summary 用于 embedding 和展示；完整结构化 JSON 存入 extra_metadata
+            image.vlm_description = result.summary
+            # 合并而非覆盖 extra_metadata，避免抹掉之前写入的数据
+            existing_extra = image.extra_metadata or {}
+            existing_extra.update(result.raw)
+            image.extra_metadata = existing_extra
+            image.vlm_model = cfg.vlm.model
+            image.vlm_time = datetime.now()
+            await session.commit()
+            logger.info(f"[{image_id}] Step 5 完成: VLM 描述已生成 (parsed_ok={result.parsed_ok})")
 
-        # ── Step 6: Embedding + Milvus ──
-        await _update_status(session, image, "embedding", "向量生成中")
-        from src.services.embedding import build_embedding_text, embed_text
-        from src.services.milvus_client import insert_vector
+            # ── Step 6: Embedding + Milvus ──
+            await _update_status(session, image, "embedding", "向量生成中")
+            from src.services.embedding import build_embedding_text, embed_text
+            from src.services.milvus_client import insert_vector
 
-        # 用 summary（而非 JSON 原文）做 embedding，避免字段名污染向量语义
-        embed_text_input = build_embedding_text(
-            vlm_description=result.summary,
-            task_id=image.task_id or "",
-            field_name=image.field_name or "",
-            survey_stage=image.survey_stage or "",
-            device_model=image.device_model or "",
-            data_type=image.data_type or "",
-        )
-        vector = await embed_text(embed_text_input)
-        await insert_vector(
-            image_id=str(image.id),
-            text_vector=vector,
-            task_id=image.task_id or "",
-            field_name=image.field_name or "",
-            survey_stage=image.survey_stage or "",
-            crop_type=result.crop_type or "",
-            growth_stage=result.growth_stage or "",
-        )
-        image.embedding_id = str(image.id)
-        await session.commit()
-        logger.info(f"[{image_id}] Step 6 完成: 向量已写入 Milvus")
+            # 用 summary（而非 JSON 原文）做 embedding，避免字段名污染向量语义
+            embed_text_input = build_embedding_text(
+                vlm_description=result.summary,
+                task_id=image.task_id or "",
+                field_name=image.field_name or "",
+                survey_stage=image.survey_stage or "",
+                device_model=image.device_model or "",
+                data_type=image.data_type or "",
+            )
+            vector = await embed_text(embed_text_input)
+            await insert_vector(
+                image_id=str(image.id),
+                text_vector=vector,
+                task_id=image.task_id or "",
+                field_name=image.field_name or "",
+                survey_stage=image.survey_stage or "",
+                crop_type=result.crop_type or "",
+                growth_stage=result.growth_stage or "",
+            )
+            image.embedding_id = str(image.id)
+            await session.commit()
+            logger.info(f"[{image_id}] Step 6 完成: 向量已写入 Milvus")
+        else:
+            logger.info(f"[{image_id}] 已跳过 VLM / Embedding / Milvus（skip_vlm_embedding=True）")
 
         # ── 完成 ──
         image.status = "ready"
@@ -211,7 +220,7 @@ async def process_sync_image(
     enrichment: dict,
     observations_snapshot: dict,
     force: bool = False,
-    skip_vlm_embedding: bool = False,
+    skip_vlm_embedding: bool | None = None,
 ) -> None:
     """处理从 agri_research 同步来的单张小区裁剪片。
 
@@ -227,7 +236,8 @@ async def process_sync_image(
         enrichment: fetch_plot_enrichment 返回的小区富化信息
         observations_snapshot: fetch_observations_snapshot 返回的性状快照
         force: 强制重跑
-        skip_vlm_embedding: 是否跳过 VLM/Embedding 步骤（用于并行优化）
+        skip_vlm_embedding: 是否跳过 VLM/Embedding 步骤；None 时取配置
+            ``processing.skip_vlm_embedding``
     """
     sem = _get_semaphore()
     async with sem:
@@ -240,9 +250,11 @@ async def _do_process_sync(
     enrichment: dict,
     observations_snapshot: dict,
     force: bool,
-    skip_vlm_embedding: bool = False,
+    skip_vlm_embedding: bool | None = None,
 ) -> None:
     cfg = get_config()
+    if skip_vlm_embedding is None:
+        skip_vlm_embedding = cfg.processing.skip_vlm_embedding
     image_product_id = str(candidate["image_product_id"])
     mission_id = str(candidate["mission_id"]) if candidate.get("mission_id") else None
     plot_id = str(candidate["plot_id"]) if candidate.get("plot_id") else None
@@ -483,9 +495,11 @@ async def _do_process_sync(
             image.embedding_id = str(image.id)
             await session.commit()
         else:
-            # 跳过 VLM/Embedding，标记为等待完成
-            from src.services.vlm import describe_image
-            result = type('obj', (object,), {'summary': '', 'raw': {}, 'crop_type': '', 'growth_stage': ''})()
+            # 跳过 VLM/Embedding，不生成描述与向量
+            logger.info(
+                f"[sync] 已跳过 VLM / Embedding / Milvus "
+                f"image_product={image_product_id}（skip_vlm_embedding=True）"
+            )
 
         image.status = "ready"
         image.error_message = None
