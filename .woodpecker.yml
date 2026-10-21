@@ -7,7 +7,8 @@
 #   infra         → 共享基础设施（postgres、minio、milvus 等）
 #   phenomics-net → 与 phenomics-backend 通信
 #
-# 健康检查用独立 curl 容器接入 phenomics-net，通过容器名访问。
+# 健康检查用 docker exec 在容器内部通过 localhost 访问，
+# 避免 DNS 解析延迟和每次新建容器的开销。
 
 steps:
   - name: build
@@ -59,14 +60,18 @@ steps:
         docker network connect phenomics-net drone-imaging
         echo "新容器已启动"
 
-        # ── 6. 健康检查（最多 60s）──
+        # ── 6. 健康检查（最多 90s）──
+        # 用 docker exec 在容器内部通过 localhost 访问，避免：
+        #   - 每次新建容器的开销
+        #   - DNS 解析延迟（drone-imaging 主机名在 phenomics-net 中的注册需要时间）
+        #   - 依赖外部 curlimages/curl 镜像的拉取
         echo "等待服务就绪..."
-        for i in $(seq 1 20); do
-          if docker run --rm --network phenomics-net curlimages/curl -fsS --max-time 2 http://drone-imaging:8002/health > /dev/null 2>&1; then
+        for i in $(seq 1 30); do
+          if docker exec drone-imaging curl -fsS --max-time 2 http://localhost:8002/health > /dev/null 2>&1; then
             echo "✓ 部署成功，服务就绪"
             exit 0
           fi
-          echo "等待中... ($i/20)"
+          echo "等待中... ($i/30)"
           sleep 3
         done
 
