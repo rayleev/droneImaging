@@ -123,6 +123,7 @@ async def list_mosaics(
     for m in mosaics:
         item = MosaicListItem.model_validate(m)
         item.thumbnail_url = f"{base}/api/mosaics/{m.id}/thumbnail"
+        item.tile_url = f"{base}/api/mosaics/{m.id}/tiles/{{z}}/{{x}}/{{y}}.png"
         items.append(item)
 
     return MosaicListResponse(items=items, total=total, page=page, page_size=page_size)
@@ -141,6 +142,7 @@ async def get_mosaic(
     detail = MosaicDetail.model_validate(mosaic)
     base = get_public_base_url()
     detail.thumbnail_url = f"{base}/api/mosaics/{mosaic.id}/thumbnail"
+    detail.tile_url = f"{base}/api/mosaics/{mosaic.id}/tiles/{{z}}/{{x}}/{{y}}.png"
     return detail
 
 
@@ -169,6 +171,45 @@ async def get_mosaic_thumbnail(
     except Exception as e:
         logger.error(f"读取拼接影像缩略图失败: {mosaic_id} | {e}")
         raise HTTPException(status_code=500, detail="读取缩略图失败")
+
+
+@router.get("/{mosaic_id}/tiles/{z}/{x}/{y}.png")
+async def get_mosaic_tile(
+    mosaic_id: uuid.UUID,
+    z: int,
+    x: int,
+    y: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """获取拼接影像的 XYZ 瓦片（256×256 PNG）。
+
+    复用影像瓦片服务的渲染逻辑，从 MinIO 中的拼接 COG 按需生成瓦片，
+    使整块田影像可以叠加在卫星地图底图上显示。
+    """
+    mosaic = await session.get(ImageMosaic, mosaic_id)
+    if mosaic is None:
+        raise HTTPException(status_code=404, detail="拼接影像不存在")
+    if not mosaic.file_path:
+        raise HTTPException(status_code=404, detail="该拼接影像没有文件（file_path 为空）")
+
+    from src.routers.tiles import _render_tile, _tile_bounds, _transparent_tile
+    from src.services.storage import get_presigned_url
+
+    cfg = get_config()
+    try:
+        cog_url = get_presigned_url(cfg.minio.buckets.cog, mosaic.file_path)
+    except Exception as e:
+        logger.error(f"生成拼接影像预签名 URL 失败: {e}")
+        raise HTTPException(status_code=500, detail="存储访问失败")
+
+    tile_bbox = _tile_bounds(z, x, y)
+    try:
+        png_bytes = _render_tile(cog_url, tile_bbox, None)
+    except Exception as e:
+        logger.error(f"拼接影像瓦片渲染失败 [{mosaic_id}] z={z} x={x} y={y}: {e}")
+        png_bytes = _transparent_tile()
+
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.get("/{mosaic_id}/original")

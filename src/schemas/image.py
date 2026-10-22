@@ -302,6 +302,7 @@ class MosaicListItem(BaseModel):
     width_pixels: Optional[int] = None
     height_pixels: Optional[int] = None
     thumbnail_url: Optional[str] = None
+    tile_url: Optional[str] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
