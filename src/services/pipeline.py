@@ -276,6 +276,17 @@ async def _do_process_sync(
     capture_date = _iso(capture_date_raw)
     flight_date = _iso(flight_date_raw)
 
+    def _to_dt(d: Optional[str]) -> Optional[datetime]:
+        if not d:
+            return None
+        try:
+            return datetime.fromisoformat(d)
+        except ValueError:
+            return None
+
+    # 调查时间：优先 capture_date，其次 flight_date（前端时间条按此排序展示）
+    survey_time = _to_dt(capture_date) or _to_dt(flight_date)
+
     # 已存在则按 force 决定跳过/重跑
     from sqlalchemy import select as _sel
     existing = (
@@ -356,6 +367,7 @@ async def _do_process_sync(
             variety=variety,
             treatment=treatment,
             capture_date=capture_date,
+            survey_time=survey_time,
             data_type="可见光" if product_type == "rgb" else ("多光谱" if product_type == "ms" else product_type),
             extra_metadata={
                 "experiment_name": experiment_name,
