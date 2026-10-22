@@ -49,7 +49,9 @@ def _read_world_file(world_path: Path) -> Optional[Affine]:
         logger.warning(f"世界文件行数不足 {world_path}: {vals}")
         return None
     px, rot_x, rot_y, py, ulx, uly = vals[:6]
-    return Affine(rot_x, px, ulx, py, rot_y, uly)
+    # 世界文件行序为 A, D, B, E, C, F；Affine 参数序为 (a, b, c, d, e, f)
+    # 即 (A, B, C, D, E, F) = (px, rot_y, ulx, rot_x, py, uly)
+    return Affine(px, rot_y, ulx, rot_x, py, uly)
 
 
 def _find_world_file(raster_path: Path) -> Optional[Path]:
