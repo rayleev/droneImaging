@@ -166,11 +166,11 @@ class ImageDetail(ImageListItem):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     # agri_research 富化字段
-    image_product_id: Optional[str] = None
-    mission_id: Optional[str] = None
-    plot_id: Optional[str] = None
-    experiment_id: Optional[str] = None
-    site_id: Optional[str] = None
+    image_product_id: Optional[uuid.UUID] = None
+    mission_id: Optional[uuid.UUID] = None
+    plot_id: Optional[uuid.UUID] = None
+    experiment_id: Optional[uuid.UUID] = None
+    site_id: Optional[uuid.UUID] = None
     plot_code: Optional[str] = None
     flight_date: Optional[str] = None
     product_type: Optional[str] = None
@@ -288,9 +288,9 @@ class MosaicListItem(BaseModel):
     """拼接影像列表项"""
     id: uuid.UUID
     mosaic_type: Optional[str] = None
-    plot_id: Optional[str] = None
+    plot_id: Optional[uuid.UUID] = None
     plot_code: Optional[str] = None
-    mission_id: Optional[str] = None
+    mission_id: Optional[uuid.UUID] = None
     product_type: Optional[str] = None
     image_count: int = 0
     bbox: Optional[list] = None

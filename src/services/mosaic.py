@@ -355,18 +355,17 @@ def _merge_rasterio(
         # 拼接
         mosaic_array, transform = merge(datasets)
         crs = datasets[0].crs
-        height, width = mosaic_array.shape[1], mosaic_array.shape[0] if len(mosaic_array.shape) == 3 else mosaic_array.shape[:2]
+        if len(mosaic_array.shape) == 3:
+            height, width = mosaic_array.shape[1], mosaic_array.shape[2]
+            count = mosaic_array.shape[0]
+        else:
+            height, width = mosaic_array.shape[0], mosaic_array.shape[1]
+            count = 1
 
-        # 计算边界
-        bounds = datasets[0].bounds
-        for ds in datasets[1:]:
-            bounds = (
-                min(bounds.left, ds.bounds.left),
-                min(bounds.bottom, ds.bounds.bottom),
-                max(bounds.right, ds.right),
-                max(bounds.top, ds.top),
-            )
-        bbox = [bounds.left, bounds.bottom, bounds.right, bounds.top]
+        # 使用 transform + 数组维度计算 bbox（避免逐次迭代 bounds 的类型错误）
+        from rasterio.transform import array_bounds
+        bounds = array_bounds(height, width, transform)
+        bbox = list(bounds)
 
     finally:
         for ds in datasets:
@@ -380,7 +379,7 @@ def _merge_rasterio(
         driver='GTiff',
         width=width,
         height=height,
-        count=mosaic_array.shape[0] if len(mosaic_array.shape) == 3 else 1,
+        count=count,
         transform=transform,
         crs=crs,
     )
