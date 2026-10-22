@@ -279,8 +279,8 @@ class ImageMosaic(Base):
         comment="关联的小区ID",
     )
     plot_code: Mapped[str | None] = mapped_column(
-        String(100), nullable=True,
-        comment="小区编号",
+        String(1000), nullable=True,
+        comment="小区编号；整块田拼接时存储所有小区编号（逗号拼接）",
     )
     mission_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=True), nullable=True,

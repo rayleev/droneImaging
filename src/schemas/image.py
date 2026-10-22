@@ -165,6 +165,10 @@ class ImageDetail(ImageListItem):
     extra_metadata: Optional[dict] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # 文件路径（MinIO）
+    original_path: Optional[str] = None
+    cog_path: Optional[str] = None
+    thumbnail_path: Optional[str] = None
     # agri_research 富化字段
     image_product_id: Optional[uuid.UUID] = None
     mission_id: Optional[uuid.UUID] = None

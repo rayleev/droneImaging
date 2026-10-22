@@ -28,6 +28,63 @@ from src.schemas.image import MosaicDetail, MosaicListItem, MosaicListResponse
 router = APIRouter()
 
 
+@router.get("/create")
+async def create_mosaics(
+    session: AsyncSession = Depends(get_session),
+):
+    """手动触发拼接影像创建（GET 方式，绕过 nginx POST 限制）。"""
+    from src.services.mosaic import create_mosaics_for_session
+    count = await create_mosaics_for_session(session)
+    return {"created": count, "message": f"创建了 {count} 个拼接影像"}
+
+
+@router.get("/diagnostic")
+async def diagnostic(
+    session: AsyncSession = Depends(get_session),
+):
+    """诊断拼接影像创建条件：统计就绪影像中具备/缺失关键字段的数量。"""
+    from src.models.image import Image as ImageModel
+
+    base_stmt = select(ImageModel).where(
+        ImageModel.status == 'ready',
+        ImageModel.deleted_at.is_(None),
+    )
+    all_ready = (await session.execute(base_stmt)).scalars().all()
+
+    total = len(all_ready)
+    with_cog = sum(1 for img in all_ready if img.cog_path)
+    without_cog = total - with_cog
+    with_plot = sum(1 for img in all_ready if img.plot_id)
+    with_mission = sum(1 for img in all_ready if img.mission_id)
+    with_product_type = sum(1 for img in all_ready if img.product_type)
+
+    # 按 mission_id + product_type 分组，统计可拼接的飞行任务数
+    from collections import defaultdict
+    mission_groups = defaultdict(set)
+    for img in all_ready:
+        if img.mission_id and img.plot_id and img.cog_path:
+            key = (str(img.mission_id), img.product_type or '')
+            mission_groups[key].add(str(img.plot_id))
+
+    stitchable_missions = {
+        k: len(v) for k, v in mission_groups.items() if len(v) >= 2
+    }
+
+    return {
+        "total_ready": total,
+        "with_cog_path": with_cog,
+        "without_cog_path": without_cog,
+        "with_plot_id": with_plot,
+        "with_mission_id": with_mission,
+        "with_product_type": with_product_type,
+        "stitchable_missions": len(stitchable_missions),
+        "mission_detail": [
+            {"mission_id": k[0], "product_type": k[1], "unique_plots": v}
+            for k, v in stitchable_missions.items()
+        ],
+    }
+
+
 @router.get("", response_model=MosaicListResponse)
 async def list_mosaics(
     mosaic_type: Optional[str] = None,
