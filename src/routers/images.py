@@ -142,6 +142,7 @@ async def list_images(
     task_id: Optional[str] = None,
     field_name: Optional[str] = None,
     field_group: Optional[str] = None,
+    mission_id: Optional[str] = None,
     survey_stage: Optional[str] = None,
     data_type: Optional[str] = None,
     surveyor: Optional[str] = None,
@@ -184,6 +185,9 @@ async def list_images(
     if field_group:
         query = query.where(Image.field_group == field_group)
         count_query = count_query.where(Image.field_group == field_group)
+    if mission_id:
+        query = query.where(Image.mission_id == mission_id)
+        count_query = count_query.where(Image.mission_id == mission_id)
     if survey_stage:
         query = query.where(Image.survey_stage == survey_stage)
         count_query = count_query.where(Image.survey_stage == survey_stage)
