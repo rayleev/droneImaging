@@ -239,6 +239,19 @@ async def get_mosaic_original(
     return stream_object(get_config().minio.buckets.cog, mosaic.file_path, filename)
 
 
+@router.get("/{mosaic_id}/original.tif")
+async def get_mosaic_original_tif(
+    mosaic_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """同 /original，仅让 URL 带 .tif 后缀。
+
+    field-shape-web 是根据 URL 最后一段推断文件名的，若没有扩展名会被判为
+    400 "Unsupported file format"，因此这里提供一个带后缀的等价地址。
+    """
+    return await get_mosaic_original(mosaic_id, session)
+
+
 @router.get("/{mosaic_id}/original.png")
 async def get_mosaic_original_png(
     mosaic_id: uuid.UUID,
