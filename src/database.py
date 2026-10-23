@@ -60,6 +60,13 @@ async def init_db() -> None:
         from src.models import image, fetch_source  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
 
+    # 轻量增量迁移：create_all 不会修改已存在的表，这里补齐后加的列。
+    # （幂等：IF NOT EXISTS，可重复执行）
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(
+            "ALTER TABLE pa_di_image_mosaic ADD COLUMN IF NOT EXISTS survey_time timestamptz"
+        )
+
     # 外部 agri_research 只读连接池
     rcfg = get_config().research_db
     if rcfg.enabled:

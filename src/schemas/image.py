@@ -138,6 +138,9 @@ class ImageListItem(BaseModel):
     upload_time: datetime
     original_filename: str
     status: str
+    plot_id: Optional[uuid.UUID] = None
+    plot_code: Optional[str] = None
+    mission_id: Optional[uuid.UUID] = None
     bbox: Optional[list] = None
     center_lon: Optional[float] = None
     center_lat: Optional[float] = None
@@ -297,6 +300,7 @@ class MosaicListItem(BaseModel):
     mission_id: Optional[uuid.UUID] = None
     product_type: Optional[str] = None
     image_count: int = 0
+    survey_time: Optional[datetime] = None
     bbox: Optional[list] = None
     crs: Optional[str] = None
     width_pixels: Optional[int] = None

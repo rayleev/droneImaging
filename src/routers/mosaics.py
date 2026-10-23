@@ -32,10 +32,19 @@ router = APIRouter()
 async def create_mosaics(
     session: AsyncSession = Depends(get_session),
 ):
-    """手动触发拼接影像创建（GET 方式，绕过 nginx POST 限制）。"""
+    """手动触发拼接影像创建（GET 方式，绕过 nginx POST 限制）。
+
+    返回中附带 errors：每个拼接失败的原因，便于定位静默失败。
+    """
     from src.services.mosaic import create_mosaics_for_session
-    count = await create_mosaics_for_session(session)
-    return {"created": count, "message": f"创建了 {count} 个拼接影像"}
+    errors: list = []
+    count = await create_mosaics_for_session(session, errors=errors)
+    return {
+        "created": count,
+        "error_count": len(errors),
+        "errors": errors[:50],
+        "message": f"创建了 {count} 个拼接影像（失败 {len(errors)}）",
+    }
 
 
 @router.get("/diagnostic")

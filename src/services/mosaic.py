@@ -23,11 +23,14 @@ from src.config import get_config
 from src.models.image import Image, ImageMosaic
 
 
-async def create_mosaics_for_session(session: AsyncSession) -> int:
+async def create_mosaics_for_session(
+    session: AsyncSession, errors: Optional[list] = None
+) -> int:
     """为所有有足够图片的小区和飞行任务创建拼接影像。
 
     Args:
         session: 数据库 Session
+        errors: 可选的列表，用于收集每个拼接失败的原因（供诊断接口返回）
 
     Returns:
         创建的拼接影像数量
@@ -38,6 +41,7 @@ async def create_mosaics_for_session(session: AsyncSession) -> int:
         Image.product_type, Image.cog_path, Image.bbox, Image.crs,
         Image.image_width, Image.image_height, Image.field_name,
         Image.variety, Image.treatment, Image.experiment_id,
+        Image.survey_time, Image.flight_date,
     ).where(
         Image.status == 'ready',
         Image.plot_id.is_not(None),
@@ -84,6 +88,7 @@ async def create_mosaics_for_session(session: AsyncSession) -> int:
                     await process_mosaic_vlm_and_embedding(session, mosaic)
         except Exception as e:
             logger.exception(f"[Mosaic] 小区级拼接失败 plot={plot_id}: {e}")
+            _record_error(errors, "plot", plot_id, e)
 
     # ── 2. 飞行任务级拼接 (mission_id + product_type) ──
     mission_groups: dict[tuple, list] = defaultdict(list)
@@ -120,6 +125,7 @@ async def create_mosaics_for_session(session: AsyncSession) -> int:
                     await process_mosaic_vlm_and_embedding(session, mosaic)
         except Exception as e:
             logger.exception(f"[Mosaic] 飞行任务级拼接失败 mission={mission_id}: {e}")
+            _record_error(errors, "mission", mission_id, e)
 
     logger.info(f"[Mosaic] 创建了 {created_count} 个拼接影像")
     return created_count
@@ -197,6 +203,7 @@ async def create_mosaic_for_plot(
             mission_id=images[0].mission_id,
             product_type=product_type,
             mosaic_type='plot',
+            survey_time=_mosaic_survey_time(images),
             image_ids=image_ids,
             image_count=len(image_ids),
             file_path=mosaic_minio_path,
@@ -301,6 +308,7 @@ async def create_mosaic_for_mission(
             mission_id=mission_id,
             product_type=product_type,
             mosaic_type='mission',
+            survey_time=_mosaic_survey_time(images),
             image_ids=image_ids,
             image_count=len(image_ids),
             file_path=mosaic_minio_path,
@@ -329,6 +337,84 @@ async def create_mosaic_for_mission(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _record_error(errors: Optional[list], kind: str, key, exc: Exception) -> None:
+    """收集拼接失败原因（供 /create 诊断接口返回，避免异常被静默吞掉）。"""
+    if errors is None:
+        return
+    errors.append({
+        "kind": kind,
+        "key": str(key),
+        "error": f"{type(exc).__name__}: {exc}"[:500],
+    })
+
+
+def _mosaic_survey_time(images: list) -> Optional[datetime]:
+    """取拼接影像的调查时间：优先影像的 survey_time，其次 flight_date。
+
+    时间轴按此排序展示，因此拼接记录自身也需要带上日期。
+    """
+    times = [img.survey_time for img in images if getattr(img, "survey_time", None)]
+    if times:
+        return max(times)
+    for img in images:
+        d = getattr(img, "flight_date", None)
+        if not d:
+            continue
+        try:
+            return datetime.fromisoformat(d)
+        except ValueError:
+            continue
+    return None
+
+
+def _prepare_axis_aligned(local_files: list, tmp_dir) -> list:
+    """把地理变换退化的影像（90° 旋转）转置为轴对齐，返回可直接拼接的文件列表。
+
+    部分原始 GeoTIFF 的 GDAL 变换是 ``(x0, 0, ry, y0, -rx, 0)``：像素宽/高为 0，
+    分辨率落在旋转项上（相当于影像被整体旋转了 90°）。``rasterio.merge`` 要求
+    矩形网格，遇到 ``a == 0`` 会在 ``windows.from_bounds`` 里除以 0 抛
+    ``ZeroDivisionError``（表现为"拼接失败: float division by zero"）。
+
+    处理办法：把数组转置（新宽=原高、新高=原宽），并把变换改写为轴对齐
+    ``Affine(a'=b, e'=d, c'=c, f'=f)`` 后另存，再交给 merge。
+    """
+    import numpy as np
+    import rasterio
+    from affine import Affine
+
+    tmp_dir = Path(tmp_dir)
+    result: list[Path] = []
+    for f in local_files:
+        with rasterio.open(str(f)) as ds:
+            t = ds.transform
+            if t.a != 0 or t.b == 0:
+                result.append(f)  # 已是轴对齐，直接用
+                continue
+
+            data = ds.read()
+            data = np.transpose(data, (0, 2, 1))  # (band, h, w) -> (band, w, h)
+            new_t = Affine(t.b, 0.0, t.c, 0.0, t.d, t.f)
+
+            profile = {
+                "driver": "GTiff",
+                "width": int(data.shape[2]),
+                "height": int(data.shape[1]),
+                "count": int(data.shape[0]),
+                "dtype": ds.dtypes[0],
+                "crs": ds.crs,
+                "transform": new_t,
+            }
+            if ds.nodata is not None:
+                profile["nodata"] = ds.nodata
+
+            out = tmp_dir / f"{Path(f).stem}_ax.tif"
+            with rasterio.open(str(out), "w", **profile) as dst:
+                dst.write(data)
+            result.append(out)
+            logger.debug(f"[Mosaic] 已把旋转影像转置为轴对齐: {Path(f).name}")
+    return result
+
+
 def _merge_rasterio(
     local_files: list[Path],
     tmp_dir: Path,
@@ -349,6 +435,9 @@ def _merge_rasterio(
 
     if len(local_files) < 2:
         raise ValueError(f"可用影像不足2张，无法拼接")
+
+    # 先把旋转/退化的影像转置为轴对齐，否则 rasterio.merge 会除零失败
+    local_files = _prepare_axis_aligned(local_files, tmp_dir)
 
     datasets = [rasterio.open(str(f)) for f in local_files]
     try:

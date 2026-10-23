@@ -294,6 +294,10 @@ class ImageMosaic(Base):
         String(20), nullable=True, index=True,
         comment="拼接类型: plot(小区级) / mission(飞行任务级)",
     )
+    survey_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True,
+        comment="调查时间（取该拼接所含影像的调查/飞行日期，供时间轴排序）",
+    )
 
     # ── 拼接信息 ──
     image_ids: Mapped[list[str] | None] = mapped_column(
