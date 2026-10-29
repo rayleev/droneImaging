@@ -447,6 +447,19 @@ async def get_original_image(
     )
 
 
+@router.get("/{image_id}/original.tif")
+async def get_original_image_tif(
+    image_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """同 /original，仅让 URL 带 .tif 后缀。
+
+    field-shape-web 是根据 URL 最后一段推断文件名的，缺少扩展名会被判为
+    400 "Unsupported file format"，因此为单幅整图提供带后缀的等价地址。
+    """
+    return await get_original_image(image_id, session)
+
+
 @router.get("/{image_id}/original.png")
 async def get_original_png(
     image_id: uuid.UUID,
